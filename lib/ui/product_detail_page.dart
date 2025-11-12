@@ -9,6 +9,7 @@ import 'wishlist_page.dart';
 import 'cart_page.dart';
 import 'my_orders_page.dart';
 import 'profile_settings_page.dart';
+import 'rating_display.dart';
 
 class ProductDetailPage extends StatefulWidget {
   const ProductDetailPage({super.key, required this.product});
@@ -28,6 +29,32 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
     if (s == null || s.isEmpty) return false;
     final u = Uri.tryParse(s);
     return u != null && (u.scheme == 'http' || u.scheme == 'https');
+  }
+
+  // 💡 الحل البديل: دالة مساعدة لتهيئة المنتج من الـ Map
+  Product _productFromMap(Map<String, dynamic> m, String id) {
+    // 1. قراءة البيانات الجديدة المخزنة في Firestore
+    final firestoreAvgRating = (m['avgRating'] as num? ?? 0.0).toDouble();
+    final firestoreRatingsCount = (m['ratingsCount'] as num? ?? 0).toInt();
+
+    // 2. استخدام البيانات الجديدة لتهيئة الـ constructor
+    return Product(
+      id: id,
+      title: (m['name'] ?? 'Product').toString(),
+      desc: (m['description'] ?? m['desc'] ?? '').toString(),
+      price: (m['price'] as num? ?? double.tryParse('${m['price']}') ?? 0.0).toDouble(),
+      image: (m['imageUrl'] ?? m['image'] ?? '').toString(),
+
+      // ✅ تعيين الحقول القديمة بالقيم الجديدة لضمان التوافق (مثل CartPage)
+
+
+      // ✅ الحقول الجديدة
+      avgRating: firestoreAvgRating,
+      ratingsCount: firestoreRatingsCount,
+
+      storeId: (m['storeId'] ?? '').toString(),
+      // لا نحتاج لتعيين sizes يدوياً إذا كان الكلاس يحتوي على قيمة افتراضية
+    );
   }
 
   @override
@@ -97,19 +124,14 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // التقييم
-                Row(
-                  children: [
-                    const Icon(Icons.star_rounded,
-                        color: Colors.amber, size: 18),
-                    const SizedBox(width: 4),
-                    Text(p.rating.toStringAsFixed(1),
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 6),
-                    Text(_formatCount(p.reviews),
-                        style: const TextStyle(color: kHint)),
-                  ],
+                // 💡 إضافة RatingDisplay لعرض التقييم
+                RatingDisplay(
+                  avgRating: p.avgRating,
+                  ratingsCount: p.ratingsCount,
+                  starSize: 22,
+                  textSize: 18,
                 ),
+
                 const Spacer(),
                 // السعر
                 Text(
@@ -178,19 +200,10 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
             }
             final d = s2.data!.docs.first;
             final m = d.data();
-            final other = Product(
-              id: d.id,
-              title: (m['name'] ?? 'Product').toString(),
-              desc: (m['description'] ?? m['desc'] ?? '').toString(),
-              price: (m['price'] is num)
-                  ? (m['price'] as num).toDouble()
-                  : double.tryParse('${m['price']}') ?? 0,
-              image: (m['imageUrl'] ?? m['image'] ?? '').toString(),
-              rating: (m['rating'] is num)
-                  ? (m['rating'] as num).toDouble()
-                  : 4.6,
-              reviews: m['reviews'] is num ? (m['reviews'] as num).toInt() : 0,
-            );
+
+            // 🛑 استخدام الدالة المساعدة الجديدة بدلاً من Product.fromMap
+            final other = _productFromMap(m, d.id);
+
             return _similarSingle(other);
           },
         );
@@ -235,12 +248,26 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                p.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style:
-                const TextStyle(fontWeight: FontWeight.w700, color: kText),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    p.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                    const TextStyle(fontWeight: FontWeight.w700, color: kText),
+                  ),
+                  const SizedBox(height: 4),
+                  // 💡 عرض التقييم للمنتج المشابه
+                  RatingDisplay(
+                    avgRating: p.avgRating,
+                    ratingsCount: p.ratingsCount,
+                    starSize: 14,
+                    textSize: 12,
+                  ),
+                ],
               ),
             ),
             const SizedBox(width: 10),

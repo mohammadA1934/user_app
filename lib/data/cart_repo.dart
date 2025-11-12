@@ -3,12 +3,23 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/product.dart';
+// ⚠ ملاحظة: نحن نفترض أن كلاس Product في ملف '../models/product.dart' قد تم تحديثه ليحتوي على حقل 'storeId'.
+// إذا لم تكوني قد عدلتيه، يجب أن تذهبي إلى ذلك الملف وتضيفي: final String storeId;
 
 class CartItem {
   final Product product;
+  // ✅ الحقول موجودة هنا كما كان لديك، لكن سنقوم بحسابها عبر getter
+  // final double avgRating; // 🛑 تم حذف هذا السطر
+  // final int ratingsCount; // 🛑 تم حذف هذا السطر
   int qty;
 
+  // 💡 التعديل رقم 1: إزالة avgRating و ratingsCount من Constructor لـ CartItem.
+  // تم إضافتهما كـ getters بدلاً من حقول لتجنب التكرار.
   CartItem({required this.product, this.qty = 1});
+
+  // ✅ إضافة Getters للوصول إلى قيم التقييم بشكل آمن عبر Product
+  double get avgRating => product.avgRating;
+  int get ratingsCount => product.ratingsCount;
 
   double get lineTotal => product.price * qty;
 
@@ -20,9 +31,13 @@ class CartItem {
       'desc': product.desc,
       'price': product.price,
       'image': product.image,
-      'rating': product.rating,
-      'reviews': product.reviews,
+
       'sizes': product.sizes,
+      // 🛑 التعديل رقم 1: حفظ storeId في الـ JSON للتخزين المحلي
+      'storeId': product.storeId,
+      // ✅ التعديل رقم 2: حفظ قيم التقييم المتوسطة في JSON
+      'avgRating': product.avgRating,
+      'ratingsCount': product.ratingsCount,
     },
   };
 
@@ -37,11 +52,17 @@ class CartItem {
             ? (p['price'] as num).toDouble()
             : double.tryParse('${p['price']}') ?? 0.0,
         image: (p['image'] ?? '').toString(),
-        rating: (p['rating'] is num) ? (p['rating'] as num).toDouble() : 0.0,
-        reviews: (p['reviews'] is num) ? (p['reviews'] as num).toInt() : 0,
+
         sizes: (p['sizes'] is List)
             ? List<String>.from(p['sizes'] as List)
             : const <String>[],
+        // 🛑 التعديل رقم 2: استرجاع storeId من الـ JSON المخزن محلياً
+        storeId: (p['storeId'] ?? '').toString(),
+
+        // ✅ التعديل رقم 3: قراءة avgRating و ratingsCount وتمريرهما لـ Product Constructor
+        avgRating: (p['avgRating'] as num? ?? 0.0).toDouble(),
+        ratingsCount: (p['ratingsCount'] as num? ?? 0).toInt(),
+
       ),
       qty: (m['qty'] is num) ? (m['qty'] as num).toInt() : 1,
     );
@@ -88,6 +109,8 @@ class CartRepo extends ChangeNotifier {
     if (it != null) {
       it.qty += qty;
     } else {
+      // 💡 التعديل رقم 4: إنشاء CartItem جديد
+      // تمرير الـ Product بالكامل (الذي يحتوي الآن على avgRating/ratingsCount)
       _items[p.id] = CartItem(product: p, qty: qty);
     }
     _save();

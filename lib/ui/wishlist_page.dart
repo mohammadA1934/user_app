@@ -10,7 +10,7 @@ import 'profile_settings_page.dart';
 
 // ✅ لإضافة المنتج إلى السلة عند الضغط على أيقونة العربة
 import '../data/cart_repo.dart';
-
+import 'rating_display.dart'; // ✅ تأكد من وجود هذا الاستيراد
 class WishlistPage extends StatelessWidget {
   const WishlistPage({super.key});
 
@@ -60,7 +60,8 @@ class WishlistPage extends StatelessWidget {
                         crossAxisCount: 2,
                         mainAxisSpacing: 12,
                         crossAxisSpacing: 12,
-                        childAspectRatio: .72,
+                        // تم رفع الـ childAspectRatio ليتسع للتقييم الجديد
+                        childAspectRatio: .70,
                       ),
                       itemBuilder: (_, i) => _ProductCard(item: items[i]),
                     ),
@@ -105,7 +106,7 @@ class WishlistPage extends StatelessWidget {
             },
             child: CircleAvatar(
               radius: 18,
-              backgroundColor: kPrimary.withValues(alpha: 0.15),
+              backgroundColor: kPrimary.withOpacity(0.15),
               child: const Icon(Icons.person, color: kPrimary),
             ),
           ),
@@ -230,22 +231,34 @@ class _ProductCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
-                '${item.price.toStringAsFixed(2)} JD',
-                style: const TextStyle(
-                  color: Colors.black87,
-                  fontWeight: FontWeight.w700,
-                ),
+
+              // 💡 إضافة عرض التقييم هنا
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '${item.price.toStringAsFixed(2)} JD',
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+
+                  // ✅ دمج الـ RatingDisplay هنا
+                  RatingDisplay(
+                    avgRating: item.avgRating,
+                    ratingsCount: item.ratingsCount,
+                    starSize: 14,
+                    textSize: 12.5,
+                  ),
+                ],
               ),
+
               const SizedBox(height: 4),
+
+              // سطر الأيقونات
               Row(
                 children: [
-                  const Icon(Icons.star_rounded, color: Colors.amber, size: 18),
-                  const SizedBox(width: 4),
-                  Text(
-                    item.rating.toStringAsFixed(1),
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
                   const Spacer(),
                   // ✅ حذف من الـ Wishlist
                   IconButton(

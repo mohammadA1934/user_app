@@ -1,15 +1,73 @@
-// lib/ui/payment_page.dart
 import 'package:flutter/material.dart';
 import 'home_page.dart';
 import 'wishlist_page.dart';
 import 'cart_page.dart';
 import 'my_orders_page.dart';
+// *استيراد ملف إعدادات الملف الشخصي (ضروري لاستخدام AddCardDialog)*
 import 'profile_settings_page.dart';
 
 // ↓↓↓ لحفظ الطلب بعد الدفع ↓↓↓
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../data/cart_repo.dart';
+
+// *كلاس مساعد لتمثيل بيانات البطاقة*
+class CardData {
+  final String id;
+  final String last4Digits;
+  final String? type;
+  final String expiry;
+
+  CardData({
+    required this.id,
+    required this.last4Digits,
+    this.type,
+    required this.expiry,
+  });
+}
+
+// *_AddCardButton*
+class _AddCardButton extends StatelessWidget {
+  final VoidCallback onPressed;
+  static const kPrimary = Color(0xFF34D399);
+  static const kBorder = Color(0xFFE5E7EB);
+
+  const _AddCardButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kBorder),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.add_circle_outline_rounded, color: kPrimary),
+            SizedBox(width: 10),
+            Text(
+              '+ Add New Card',
+              style: TextStyle(
+                color: kPrimary,
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// *تم تعديل الـ Enum ليتضمن الخيارات المطلوبة حالياً*
+enum PaymentMethod { card, cod }
+
 
 class PaymentPage extends StatefulWidget {
   const PaymentPage({
@@ -31,7 +89,85 @@ class _PaymentPageState extends State<PaymentPage> {
   static const kHint = Color(0xFF9AA0A6);
   static const kBorder = Color(0xFFE5E7EB);
 
-  PaymentMethod _method = PaymentMethod.visa;
+  PaymentMethod? _method = PaymentMethod.card;
+  CardData? _selectedCard;
+  List<CardData> _cards = [];
+  bool _isLoading = true;
+  final User? _user = FirebaseAuth.instance.currentUser;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCards();
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // *دالة جلب البطاقات من Firestore*
+  Future<void> _loadCards() async {
+    if (_user == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_user!.uid)
+          .collection('cards')
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      _cards = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return CardData(
+          id: doc.id,
+          last4Digits: data['last4Digits'] ?? '',
+          type: data['type'] as String?,
+          expiry: data['expiry'] ?? '',
+        );
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          if (_cards.isNotEmpty && _selectedCard == null) {
+            _selectedCard = _cards.first;
+            _method = PaymentMethod.card;
+          } else if (_cards.isEmpty && _method == PaymentMethod.card) {
+            _method = PaymentMethod.cod;
+          }
+        });
+      }
+
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+      _snack('تعذر تحميل البطاقات: $e');
+    }
+  }
+
+  // *دالة فتح نافذة إضافة بطاقة جديدة*
+  Future<void> _showAddCardDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => const AddCardDialog(),
+    );
+    // إذا تمت إضافة بطاقة بنجاح، أعد تحميل القائمة
+    if (result == true) {
+      await _loadCards();
+      setState(() {
+        if (_cards.isNotEmpty) {
+          _selectedCard = _cards.first;
+          _method = PaymentMethod.card;
+        }
+      });
+    }
+  }
+
 
   // ===== حفظ الطلب في Firestore بعد نجاح الدفع =====
   Future<void> _placeOrder() async {
@@ -41,7 +177,15 @@ class _PaymentPageState extends State<PaymentPage> {
     final itemsInCart = CartRepo.instance.items;
     if (itemsInCart.isEmpty) return;
 
-    // تجهيز عناصر الطلب
+    String paymentDetail;
+    if (_selectedCard != null && _method == PaymentMethod.card) {
+      paymentDetail = 'Card ending in ${_selectedCard!.last4Digits} (ID: ${_selectedCard!.id})';
+    } else if (_method == PaymentMethod.cod) {
+      paymentDetail = 'Cash on Delivery';
+    } else {
+      paymentDetail = 'Unknown';
+    }
+
     final orderItems = itemsInCart
         .map((it) => {
       'productId': it.product.id,
@@ -53,7 +197,6 @@ class _PaymentPageState extends State<PaymentPage> {
     })
         .toList();
 
-    // محاولة استخراج storeId من أول منتج في السلة عبر Firestore
     String? storeId;
     try {
       final firstProductId = orderItems.first['productId'] as String;
@@ -69,27 +212,24 @@ class _PaymentPageState extends State<PaymentPage> {
         }
       }
     } catch (_) {
-      // لو فشلنا، نكمل بدون storeId (لكن لن يظهر الطلب عند الأدمن بدونها)
     }
 
     final subtotal = (widget.orderSubtotal ?? widget.total);
     final tax = (widget.total - subtotal).clamp(0.0, double.infinity);
 
-    // إنشاء الوثيقة
     await FirebaseFirestore.instance.collection('orders').add({
-      'storeId': storeId, // ← مهم لظهور الطلب عند الأدمن
+      'storeId': storeId,
       'customerUid': user.uid,
       'customerName': user.displayName ?? 'Customer',
-      'status': 'pending', // الحالة الأولية
+      'status': 'pending',
       'items': orderItems,
       'subtotal': double.parse(subtotal.toStringAsFixed(2)),
       'tax': double.parse(tax.toStringAsFixed(2)),
       'total': double.parse(widget.total.toStringAsFixed(2)),
-      'paymentMethod': _method.name,
+      'paymentMethod': paymentDetail,
       'createdAt': FieldValue.serverTimestamp(),
     });
 
-    // إفراغ السلة بعد إنشاء الطلب
     CartRepo.instance.clear();
   }
 
@@ -122,7 +262,7 @@ class _PaymentPageState extends State<PaymentPage> {
               _rowKV('Total', _formatJD(widget.total)),
               const SizedBox(height: 14),
               const Text(
-                'Payment',
+                'Payment Method',
                 style: TextStyle(
                   color: kTextDark,
                   fontWeight: FontWeight.w700,
@@ -131,38 +271,71 @@ class _PaymentPageState extends State<PaymentPage> {
               ),
               const SizedBox(height: 10),
 
-              // VISA
-              _paymentTile(
-                leading: Image.network(
-                  'https://upload.wikimedia.org/wikipedia/commons/5/5e/Visa_Inc._logo.svg',
-                  height: 18,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.credit_card),
+              if (_isLoading)
+                const Center(child: CircularProgressIndicator()),
+
+              if (!_isLoading && _cards.isEmpty)
+                const Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text('No saved cards. Please add a new card.'),
                 ),
-                tail: const Text('********2109'),
-                method: PaymentMethod.visa,
+
+              // *عرض البطاقات المحفوظة ديناميكياً*
+              ..._cards.map((card) {
+                // أيقونة البطاقة العامة (حسب الطلب الأخير)
+                Widget cardLeading = const Icon(Icons.credit_card_outlined);
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _paymentTile(
+                    leading: cardLeading,
+                    tail: Text('•••• •••• •••• ${card.last4Digits}',
+                        style: const TextStyle(letterSpacing: 1.5)
+                    ),
+                    // *تمت إضافة method هنا لحل خطأ الـ required parameter*
+                    method: PaymentMethod.card,
+                    isSelected: _selectedCard?.id == card.id,
+                    onTap: () {
+                      setState(() {
+                        _selectedCard = card;
+                        _method = PaymentMethod.card;
+                      });
+                    },
+                  ),
+                );
+              }).toList(),
+
+              // *زر إضافة بطاقة جديدة*
+              _AddCardButton(
+                onPressed: _showAddCardDialog,
               ),
 
+              const SizedBox(height: 14),
+
+              const Text(
+                'Other Methods',
+                style: TextStyle(
+                  color: kTextDark,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
               const SizedBox(height: 10),
 
-              // MasterCard
+              // *الدفع عند الاستلام (Cash on Delivery)*
               _paymentTile(
-                leading: Image.network(
-                  'https://upload.wikimedia.org/wikipedia/commons/2/2a/Mastercard-logo.svg',
-                  height: 18,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.credit_card),
-                ),
-                tail: const Text('********2109'),
-                method: PaymentMethod.mastercard,
+                leading: const Icon(Icons.money),
+                tail: const Text('Cash on Delivery'),
+                method: PaymentMethod.cod, // يتم تمرير القيمة هنا أيضاً
+                isSelected: _method == PaymentMethod.cod,
+                onTap: () {
+                  setState(() {
+                    _method = PaymentMethod.cod;
+                    _selectedCard = null;
+                  });
+                },
               ),
 
-              const SizedBox(height: 10),
-
-              // Apple Pay (كتمثيل)
-              _paymentTile(
-                leading: const Icon(Icons.apple, size: 20),
-                tail: const Text('********2109'),
-                method: PaymentMethod.applePay,
-              ),
 
               const Spacer(),
 
@@ -195,22 +368,23 @@ class _PaymentPageState extends State<PaymentPage> {
     );
   }
 
-  // عنصر وسيلة دفع
+  // *دالة _paymentTile مع الباراميتر required method*
   Widget _paymentTile({
     required Widget leading,
     required Widget tail,
     required PaymentMethod method,
+    required bool isSelected,
+    required VoidCallback onTap,
   }) {
-    final selected = _method == method;
     return InkWell(
-      onTap: () => setState(() => _method = method),
+      onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
         height: 56,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: selected ? kPrimary : kBorder, width: 1.4),
-          color: selected ? kPrimary.withOpacity(.06) : Colors.white,
+          border: Border.all(color: isSelected ? kPrimary : kBorder, width: 1.4),
+          color: isSelected ? kPrimary.withOpacity(.06) : Colors.white,
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Row(
@@ -218,11 +392,11 @@ class _PaymentPageState extends State<PaymentPage> {
             leading,
             const SizedBox(width: 12),
             Expanded(child: tail),
-            Radio<PaymentMethod>(
-              value: method,
-              groupValue: _method,
+            Radio<bool>(
+              value: isSelected,
+              groupValue: true,
               activeColor: kPrimary,
-              onChanged: (v) => setState(() => _method = v!),
+              onChanged: (v) => onTap(),
             ),
           ],
         ),
@@ -232,47 +406,67 @@ class _PaymentPageState extends State<PaymentPage> {
 
   // متابعة الدفع -> إظهار نافذة النجاح 3 ثوانٍ ثم الانتقال إلى MyOrdersPage
   Future<void> _onContinue() async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => Dialog(
-        elevation: 0,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 40),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: const Padding(
-          padding: EdgeInsets.fromLTRB(24, 28, 24, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircleAvatar(
-                backgroundColor: Color(0x2234D399),
-                radius: 34,
-                child: Icon(Icons.check_circle, size: 56, color: kPrimary),
-              ),
-              SizedBox(height: 16),
-              Text(
-                'Payment done successfully.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: kTextDark,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
+    // 1. التحقق من وسيلة الدفع
+    if (_method == null) {
+      _snack('Please select a payment method.');
+      return;
+    }
+
+    if (_method == PaymentMethod.card && _selectedCard == null) {
+      _snack('Please select a saved card or choose Cash on Delivery.');
+      return;
+    }
+
+    // 2. إذا كانت طريقة الدفع هي بطاقة، أظهر نافذة النجاح، وإلا، تجاوزها
+    if (_method == PaymentMethod.card) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => Dialog(
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 40),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: const Padding(
+            padding: EdgeInsets.fromLTRB(24, 28, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  backgroundColor: Color(0x2234D399),
+                  radius: 34,
+                  child: Icon(Icons.check_circle, size: 56, color: kPrimary),
                 ),
-              ),
-              SizedBox(height: 8),
-            ],
+                SizedBox(height: 16),
+                Text(
+                  'Payment done successfully.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: kTextDark,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                SizedBox(height: 8),
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    await Future.delayed(const Duration(seconds: 3));
-    if (!mounted) return;
+      // انتظر 3 ثوانٍ فقط في حالة الدفع بالبطاقة
+      await Future.delayed(const Duration(seconds: 3));
+      // لا نحتاج لـ if (!mounted) هنا لأننا نقوم بإغلاق الـ dialog في السطر التالي فقط
+    }
 
-    // حفظ الطلب ثم إغلاق الـ Dialog والانتقال للطلبات
+    // 3. حفظ الطلب (سواء كان بالبطاقة أو COD)
     await _placeOrder();
 
-    Navigator.of(context, rootNavigator: true).pop();
+    // 4. إغلاق الـ Dialog إذا كان مفتوحاً والانتقال إلى صفحة الطلبات
+    if (_method == PaymentMethod.card) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+
+    // الانتقال إلى MyOrdersPage
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const MyOrdersPage()),
           (r) => false,
@@ -418,5 +612,3 @@ class _PaymentPageState extends State<PaymentPage> {
     );
   }
 }
-
-enum PaymentMethod { visa, mastercard, applePay }

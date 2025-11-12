@@ -14,7 +14,7 @@ import '../data/cart_repo.dart';
 import 'product_detail_page.dart';
 
 import '../data/favorites_repo.dart';
-
+import 'rating_display.dart'; // ✅ تأكد من وجود هذا الاستيراد
 
 class StorePage extends StatelessWidget {
   const StorePage({
@@ -196,10 +196,12 @@ class _StoreProductsGrid extends StatelessWidget {
                   ? (d['price'] as num).toDouble()
                   : double.tryParse('${d['price']}') ?? 0,
               image: (d['imageUrl'] ?? d['image'] ?? '').toString(),
-              rating: (d['rating'] is num)
-                  ? (d['rating'] as num).toDouble()
-                  : 4.6,
-              reviews: d['reviews'] is num ? (d['reviews'] as num).toInt() : 0,
+              // الحقول القديمة (للتوافق مع باقي الصفحات)
+
+              storeId: (d['storeId'] ?? '').toString(),
+              // الحقول الجديدة لـ RatingDisplay
+              avgRating: (d['avgRating'] as num? ?? 0.0).toDouble(),
+              ratingsCount: (d['ratingsCount'] as num? ?? 0).toInt(),
             );
 
             return _ProductCardUI(
@@ -219,7 +221,7 @@ class _StoreProductsGrid extends StatelessWidget {
                   MaterialPageRoute(builder: (_) => const CartPage()),
                 );
               },
-              // ✅ هنا التعديل الوحيد: القلب يضيف للـ FavoritesRepo فقط
+              // ✅ القلب يضيف للـ FavoritesRepo فقط
               onWishlist: () {
                 FavoritesRepo.instance.add(product);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -436,6 +438,18 @@ class _ProductCardUI extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
+
+                  // 💡 إضافة RatingDisplay هنا
+                  RatingDisplay(
+                    avgRating: product.avgRating,
+                    ratingsCount: product.ratingsCount,
+                    starSize: 14,
+                    textSize: 12.5,
+                    // لا نعرض عدد المراجعات في البطاقة لضيق المساحة
+
+                  ),
+                  const SizedBox(height: 4),
+
                   Text(
                     product.desc,
                     maxLines: 2,
@@ -456,19 +470,12 @@ class _ProductCardUI extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 6),
+
+                  // سطر الأيقونات
                   Row(
                     children: [
-                      const Icon(Icons.star, color: Colors.amber, size: 16),
-                      const SizedBox(width: 2),
-                      Text(
-                        product.rating.toStringAsFixed(1),
-                        style: const TextStyle(color: textDark, fontSize: 12.5),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '• ${_formatCount(product.reviews)}',
-                        style: const TextStyle(color: hint, fontSize: 12.5),
-                      ),
+                      // تم حذف عرض عدد المراجعات القديم
+
                       const Spacer(),
                       // القلب → Wishlist (الاستدعاء يُمرَّر من الأعلى)
                       IconButton(
@@ -505,17 +512,7 @@ class _ProductCardUI extends StatelessWidget {
 }
 
 /// مستودع Wishlist بسيط داخل الصفحة (بدون تعديل ملفات أخرى)
-class _WishlistRepo {
-  _WishlistRepo._();
-  static final _WishlistRepo instance = _WishlistRepo._();
-  final List<Product> _items = [];
-  void add(Product p) {
-    if (_items.indexWhere((e) => e.id == p.id) == -1) {
-      _items.add(p);
-    }
-  }
-  List<Product> get items => List.unmodifiable(_items);
-}
+
 
 /// شاشة محادثة حقيقية – تحفظ وتقرأ من Firestore
 class _ChatScreen extends StatefulWidget {

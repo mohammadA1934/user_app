@@ -34,9 +34,11 @@ class FavoritesRepo extends ChangeNotifier {
           desc: (map['desc'] ?? '') as String,
           price: (map['price'] is num) ? (map['price'] as num).toDouble() : 0.0,
           image: (map['image'] ?? '') as String,
-          rating:
-          (map['rating'] is num) ? (map['rating'] as num).toDouble() : 4.6,
-          reviews: (map['reviews'] is num) ? (map['reviews'] as num).toInt() : 0,
+
+          storeId: (map['storeId'] ?? '').toString(),
+            avgRating: (map['avgRating'] as num? ?? 0.0).toDouble(),
+            // 💡 جلب عدد مرات التقييم
+            ratingsCount: (map['ratingsCount'] as num? ?? 0).toInt(),
         );
         _items[p.id] = p;
       }
@@ -55,8 +57,7 @@ class FavoritesRepo extends ChangeNotifier {
       'desc': p.desc,
       'price': p.price,
       'image': p.image,
-      'rating': p.rating,
-      'reviews': p.reviews,
+
     })
         .toList();
     await prefs.setString(_storageKey, jsonEncode(list));

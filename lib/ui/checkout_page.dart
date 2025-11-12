@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:math';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../data/cart_repo.dart';
 import 'home_page.dart';
-import 'payment_page.dart'; // للانتقال لصفحة الدفع
+import 'payment_page.dart';
 
 class CheckoutPage extends StatefulWidget {
   const CheckoutPage({super.key});
@@ -16,11 +18,29 @@ class _CheckoutPageState extends State<CheckoutPage> {
   static const kTextDark = Color(0xFF222222);
   static const kHint = Color(0xFF9AA0A6);
   static const kBorder = Color(0xFFE5E7EB);
+  static const kError = Color(0xFFE7625F); // للخصم والرسائل
 
   // إعدادات الضرائب/الخصم
   static const double _taxRate = 0.067; // ~6.7%
   final _couponCtrl = TextEditingController();
-  double _discount = 0.0;
+
+  // 🛑 حالات الكوبون المطبقة
+  double _discountValue = 0.0; // القيمة المخزنة (نسبة أو مبلغ)
+  String _discountType = 'percentage'; // 'percentage' أو 'fixed'
+  String _couponStatusMessage = ''; // رسالة حالة الكوبون
+
+  // 🛑 جلب معرف المتجر من المنتجات في العربة
+  String? get _storeId {
+    return CartRepo.instance.items.firstOrNull?.product.storeId;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (_couponValue() > 0) {
+      _couponStatusMessage = 'Coupon applied.';
+    }
+  }
 
   @override
   void dispose() {
@@ -28,23 +48,130 @@ class _CheckoutPageState extends State<CheckoutPage> {
     super.dispose();
   }
 
-  void _applyCoupon() {
-    final code = _couponCtrl.text.trim().toUpperCase();
+  // 🛑 دالة حساب الخصم الفعلي بالدينار
+  double _couponValue() {
+    if (_discountValue == 0.0) return 0.0;
+    final subtotal = CartRepo.instance.totalAmount; // الإجمالي قبل الخصم
+
+    if (_discountType == 'percentage') {
+      return subtotal * (_discountValue / 100);
+    } else if (_discountType == 'fixed') {
+      // لا يتجاوز الخصم المبلغ الإجمالي
+      return min(_discountValue, subtotal);
+    }
+    return 0.0;
+  }
+
+  // 🛑 دالة لمسح حالة الكوبون
+  void _clearCoupon() {
+    setState(() {
+      _clearCouponState();
+    });
+    _toast('Coupon cleared');
+  }
+
+  void _clearCouponState({String message = ''}) {
+    _discountValue = 0.0;
+    _discountType = 'percentage';
+    _couponCtrl.clear();
+    _couponStatusMessage = message;
+  }
+
+
+  // 🛑 دالة تطبيق الكوبون المُعدّلة (لضمان التحويل والتحديث)
+  Future<void> _applyCoupon({String? codeOverride}) async {
+    final code = (codeOverride ?? _couponCtrl.text).trim().toUpperCase();
     final subtotal = CartRepo.instance.totalAmount;
-    if (code == 'SAVE10' && subtotal > 0) {
-      setState(() => _discount = subtotal * 0.10);
-      _toast('Coupon applied: 10% off');
-    } else if (code.isEmpty) {
-      setState(() => _discount = 0);
-      _toast('Coupon cleared');
-    } else {
-      setState(() => _discount = 0);
-      _toast('Invalid coupon');
+
+    if (subtotal <= 0) {
+      _toast('Cannot apply coupon to an empty cart.');
+      _clearCoupon();
+      return;
+    }
+    if (code.isEmpty) {
+      _clearCoupon();
+      return;
+    }
+    final storeId = _storeId;
+    if (storeId == null) {
+      _toast('Store ID is missing. Cannot check coupon validity.');
+      _clearCoupon();
+      return;
+    }
+
+    // 1. البحث عن الكوبون
+    try {
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('coupons')
+          .where('storeId', isEqualTo: storeId)
+          .where('code', isEqualTo: code)
+          .limit(1)
+          .get();
+
+      if (querySnapshot.docs.isEmpty) {
+        setState(() {
+          _clearCouponState(message: 'Invalid or expired coupon code.');
+        });
+        return;
+      }
+
+      final couponData = querySnapshot.docs.first.data();
+
+      // 💡 التحويل القوي لضمان قراءة القيمة من Firebase
+      final rawDiscountValue = couponData['discount'];
+      final discount = (rawDiscountValue is num)
+          ? rawDiscountValue.toDouble()
+          : double.tryParse(rawDiscountValue.toString()) ?? 0.0;
+
+      final type = (couponData['type'] as String?) ?? 'percentage';
+
+      final tsStart = couponData['startAt'] as Timestamp?;
+      final tsEnd = couponData['endAt'] as Timestamp?;
+
+      // 2. التحقق من الصلاحية الزمنية
+      final now = DateTime.now();
+      final start = tsStart?.toDate() ?? DateTime(1900);
+      final end = tsEnd?.toDate() ?? DateTime(9999);
+
+      if (!now.isBefore(start) && !now.isAfter(end)) {
+        // الكوبون نشط
+        setState(() {
+          _discountValue = discount;
+          _discountType = type;
+
+          CartRepo.instance.notifyListeners(); // إجبار التحديث
+
+          final discountAmount = _couponValue();
+
+          print('Coupon value after applying: $discountAmount JD');
+
+          _couponStatusMessage = 'Coupon applied successfully! Saved ${discountAmount.toStringAsFixed(2)} JD.';
+        });
+        _toast("Coupon applied: $code");
+      } else {
+        // الكوبون منتهي أو لم يبدأ بعد
+        setState(() {
+          _clearCouponState(message: 'Coupon is not active yet or has expired.');
+        });
+      }
+
+    } catch (e) {
+      setState(() {
+        _clearCouponState(message: 'An error occurred. Try again.');
+      });
+      print('Error applying coupon: $e');
+      _toast('Error applying coupon. Check console for details.');
     }
   }
 
   void _toast(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+
+  // 🛑 دالة عند النقر على كوبون متاح (Coupon Chip)
+  void _selectAvailableCoupon(String code) {
+    _couponCtrl.text = code;
+    _applyCoupon(codeOverride: code);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -68,30 +195,36 @@ class _CheckoutPageState extends State<CheckoutPage> {
           animation: CartRepo.instance,
           builder: (_, __) {
             final items = CartRepo.instance.items;
+            final storeId = _storeId; // جلب الـ Store ID
 
             final rawSubtotal = CartRepo.instance.totalAmount;
-            final orderSubtotal =
-            (rawSubtotal - _discount).clamp(0.0, double.infinity);
+            // 🛑 قيمة الخصم الفعلي
+            final discountAmount = _couponValue();
+
+            // 🛑 حساب الإجمالي بعد الخصم
+            final orderSubtotalAfterDiscount =
+            (rawSubtotal - discountAmount).clamp(0.0, double.infinity);
+
             final tax =
-            double.parse((orderSubtotal * _taxRate).toStringAsFixed(2));
-            final total = (orderSubtotal + tax).clamp(0.0, double.infinity);
+            double.parse((orderSubtotalAfterDiscount * _taxRate).toStringAsFixed(2));
+            final total = (orderSubtotalAfterDiscount + tax).clamp(0.0, double.infinity);
 
             return Column(
               children: [
                 // المنتجات
                 Flexible(
-                  fit: FlexFit.loose, // ← تأخذ ارتفاعًا بقدر المحتوى فقط
+                  fit: FlexFit.loose,
                   child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                     itemCount: items.length,
-                    shrinkWrap: true, // ← مهمة لتقليص الارتفاع
-                    physics:
-                    const NeverScrollableScrollPhysics(), // ← منع سكرول داخلي
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
                     separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (_, i) {
                       final it = items[i];
                       final p = it.product;
                       return Container(
+                        // كود عرض المنتجات الأصلي
                         decoration: BoxDecoration(
                           color: Colors.white,
                           border: Border.all(color: kBorder),
@@ -130,16 +263,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                     ),
                                   ),
                                   const SizedBox(height: 4),
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.star_rounded,
-                                          color: Colors.amber, size: 16),
-                                      const SizedBox(width: 4),
-                                      Text(p.rating.toStringAsFixed(1),
-                                          style: const TextStyle(fontSize: 12)),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
+
                                   Row(
                                     children: [
                                       _qtyButton(
@@ -234,6 +358,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               borderSide: const BorderSide(
                                   color: kPrimary, width: 1.4),
                             ),
+                            // 🛑 زر مسح الكوبون
+                            suffixIcon: _discountValue > 0
+                                ? IconButton(
+                              icon: const Icon(Icons.close, size: 20),
+                              onPressed: _clearCoupon,
+                            )
+                                : null,
                           ),
                           onSubmitted: (_) => _applyCoupon(),
                         ),
@@ -249,13 +380,39 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           ),
                         ),
                         child: const Text(
-                          'apply', // ← كما طلبت (lowercase)
+                          'apply',
                           style: TextStyle(color: Colors.white),
                         ),
                       ),
                     ],
                   ),
                 ),
+
+                // 🛑 الكوبونات المتاحة للنقر
+                if (storeId != null)
+                  _AvailableCouponsWidget(
+                    storeId: storeId,
+                    onCouponSelected: _selectAvailableCoupon,
+                    kPrimary: kPrimary,
+                  ),
+                const SizedBox(height: 8),
+
+                // رسالة حالة الكوبون
+                if (_couponStatusMessage.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _couponStatusMessage,
+                        style: TextStyle(
+                          color: _discountValue > 0 ? kPrimary : kError,
+                          fontStyle: FontStyle.italic,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
 
                 // ======= الجزء السفلي (مطابق للصورة) =======
                 Padding(
@@ -274,23 +431,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
+                      // 🛑 إجمالي المبلغ قبل الخصم
                       _priceRow('Subtotal:',
-                          '${orderSubtotal.toStringAsFixed(2)} JD'),
+                          '${rawSubtotal.toStringAsFixed(2)} JD'),
+
+                      // 🛑 عرض صف الخصم إذا كان مطبقاً
+                      if (discountAmount > 0)
+                        _priceRow('Coupon Discount:',
+                            '- ${discountAmount.toStringAsFixed(2)} JD',
+                            valueColor: kError),
+
                       _priceRow('Tax:', '${tax.toStringAsFixed(2)} JD'),
                       const SizedBox(height: 8),
                       const Divider(),
                       const SizedBox(height: 6),
+                      // 🛑 عرض الإجمالي
                       Row(
-                        children: const [
-                          Text('Order Total',
+                        children: [
+                          const Text('Order Total',
                               style: TextStyle(
                                   color: kTextDark,
                                   fontWeight: FontWeight.w700)),
-                          Spacer(),
-                        ],
-                      ),
-                      Row(
-                        children: [
                           const Spacer(),
                           Text(
                             '${total.toStringAsFixed(2)} JD',
@@ -323,7 +484,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               MaterialPageRoute(
                                 builder: (_) => PaymentPage(
                                   total: total,
-                                  orderSubtotal: orderSubtotal,
+                                  orderSubtotal: orderSubtotalAfterDiscount,
                                 ),
                               ),
                             );
@@ -416,6 +577,112 @@ class _CheckoutPageState extends State<CheckoutPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// 🛑 الـ Widget الجديد لعرض الكوبونات المتاحة للنقر (تم التعديل عليه)
+class _AvailableCouponsWidget extends StatelessWidget {
+  const _AvailableCouponsWidget({
+    required this.storeId,
+    required this.onCouponSelected,
+    required this.kPrimary,
+  });
+
+  final String storeId;
+  final Function(String code) onCouponSelected;
+  final Color kPrimary;
+
+  @override
+  Widget build(BuildContext context) {
+    // جلب جميع كوبونات المتجر
+    final couponsStream = FirebaseFirestore.instance
+        .collection('coupons')
+        .where('storeId', isEqualTo: storeId)
+        .snapshots();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: couponsStream,
+      builder: (context, s) {
+        if (s.connectionState == ConnectionState.waiting) {
+          return const SizedBox(
+            height: 1,
+            child: LinearProgressIndicator(),
+          );
+        }
+
+        final docs = s.data?.docs ?? [];
+
+        // فلترة الكوبونات النشطة
+        final activeCoupons = docs.where((d) {
+          final m = d.data() as Map<String, dynamic>;
+          final tsStart = m['startAt'] as Timestamp?;
+          final tsEnd = m['endAt'] as Timestamp?;
+
+          final now = DateTime.now();
+          final start = tsStart?.toDate() ?? DateTime(1900);
+          final end = tsEnd?.toDate() ?? DateTime(9999);
+
+          // الشرط: لم يبدأ بعد AND لم ينتهِ بعد
+          return !now.isBefore(start) && !now.isAfter(end);
+        }).toList();
+
+        if (activeCoupons.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        // عرض الكوبونات النشطة
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Available Coupons:',
+                style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF9AA0A6), fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 38, // ارتفاع ثابت للكوبونات
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: activeCoupons.length,
+                  separatorBuilder: (context, index) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final data = activeCoupons[index].data() as Map<String, dynamic>;
+                    final code = data['code'] as String? ?? 'N/A';
+
+                    // 💡 التعديل الحاسم هنا لضمان قراءة القيمة من Firebase
+                    final rawDiscountValue = data['discount'];
+                    final discount = (rawDiscountValue is num)
+                        ? rawDiscountValue.toDouble()
+                        : double.tryParse(rawDiscountValue.toString()) ?? 0.0;
+
+                    final type = (data['type'] as String?) ?? 'percentage';
+
+                    String displayValue = type == 'percentage'
+                        ? '${discount.toStringAsFixed(0)}%' // لعرض 20%
+                        : '${discount.toStringAsFixed(2)} JD';
+
+                    return GestureDetector(
+                      onTap: () => onCouponSelected(code),
+                      child: Chip(
+                        label: Text(
+                          '$code ($displayValue)',
+                          style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white, fontSize: 12),
+                        ),
+                        backgroundColor: kPrimary.withOpacity(0.9),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

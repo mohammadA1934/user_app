@@ -8,6 +8,7 @@ import 'wishlist_page.dart';
 import 'cart_page.dart';
 import 'my_orders_page.dart';
 import 'profile_settings_page.dart';
+import 'product_detail_page.dart'; // قد تحتاج لهذا لاحقًا للانتقال لصفحة المنتج
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -26,11 +27,25 @@ class _HomePageState extends State<HomePage> {
   // اختيار التصنيف الحالي
   int _selectedCat = 0;
 
+  // 💡 حقل حالة البحث والمتحكم (Controller)
+  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+
   // 🔗 مراجع Firestore
   CollectionReference<Map<String, dynamic>> get _catsCol =>
       FirebaseFirestore.instance.collection('categories');
   CollectionReference<Map<String, dynamic>> get _shopsCol =>
       FirebaseFirestore.instance.collection('shops');
+  // 💡 التعديل 1: مرجع المنتجات
+  CollectionReference<Map<String, dynamic>> get _productsCol =>
+      FirebaseFirestore.instance.collection('products');
+
+  // 💡 التعديل 2: التخلص من المتحكم عند إغلاق الصفحة
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,9 +59,9 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 8),
             _buildSearch(),
             const SizedBox(height: 8),
-            _buildCategories(),        // ← الآن ديناميكي من Firestore
+            _buildCategories(),
             const Divider(height: 16),
-            Expanded(child: _buildStoresList()), // ← يعرض متاجر Firestore
+            Expanded(child: _buildStoresList()), // تم تعديلها لتشمل البحث عن المنتجات
           ],
         ),
       ),
@@ -97,13 +112,14 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // صندوق البحث (بدون منطق فلترة الآن — يبقى كما هو)
+  // 💡 صندوق البحث (ربط بالـ Controller وتحديث _searchQuery)
   Widget _buildSearch() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SizedBox(
         height: 44,
         child: TextField(
+          controller: _searchController, // ربط المتحكم
           decoration: InputDecoration(
             hintText: 'Search any Product or Store..',
             prefixIcon: const Icon(Icons.search_rounded, color: kHint),
@@ -121,6 +137,11 @@ class _HomePageState extends State<HomePage> {
               borderSide: const BorderSide(color: kPrimary, width: 1.4),
             ),
           ),
+          onChanged: (value) {
+            setState(() {
+              _searchQuery = value.toLowerCase().trim();
+            });
+          },
         ),
       ),
     );
@@ -177,12 +198,6 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
-              TextButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.filter_list_rounded, size: 18),
-                label: const Text('Filter'),
-                style: TextButton.styleFrom(foregroundColor: kTextDark),
-              ),
             ],
           ),
         );
@@ -190,18 +205,80 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // قائمة المتاجر — تُجلب من Firestore (shops)
-  Widget _buildStoresList() {
-    // 👈 نقرأ فقط المتاجر المفعّلة (توافقًا مع القواعد)
-    final stream = _shopsCol
-        .where('status', isEqualTo: 'active')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
+  // 💡 التعديل 4: دالة جلب ودمج نتائج البحث (المتاجر والمنتجات)
+  Future<List<Map<String, dynamic>>> _fetchSearchResults() async {
+    // 1. جلب جميع المتاجر النشطة (للفلترة أو العرض الكامل)
+    final allShopsSnapshot = await _shopsCol.where('status', isEqualTo: 'active').get();
 
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: stream,
+    // 2. تطبيق فلترة البحث على المتاجر
+    final shopResults = allShopsSnapshot.docs.where((d) {
+      final data = d.data();
+      final name = (data['name'] ?? '').toString().toLowerCase();
+      final desc = (data['about'] ?? data['description'] ?? '').toString().toLowerCase();
+
+      // إذا كان البحث فارغاً، نعرض جميع المتاجر النشطة
+      if (_searchQuery.isEmpty) return true;
+
+      return name.contains(_searchQuery) || desc.contains(_searchQuery);
+    }).map((d) {
+      final data = d.data();
+      data['id'] = d.id;
+      data['type'] = 'shop'; // تحديد نوع النتيجة
+      return data;
+    }).toList();
+
+    // 3. فلترة المتاجر حسب التصنيف (تطبق على المتاجر فقط)
+    List<Map<String, dynamic>> shopsByCat;
+    if (_searchQuery.isEmpty && _selectedCat != 0) {
+      final selectedName = _selectedCategoryNameFromStream();
+      shopsByCat = shopResults.where((item) {
+        final shopCat = (item['category'] ?? '').toString();
+        return shopCat.toLowerCase() == selectedName.toLowerCase();
+      }).toList();
+    } else {
+      shopsByCat = shopResults;
+    }
+
+
+    // 4. جلب المنتجات وتطبيق فلترة البحث (تطبق فقط إذا كان هناك نص بحث)
+    final productResults = <Map<String, dynamic>>[];
+    if (_searchQuery.isNotEmpty) {
+      // 💡 جلب 200 منتج كحد أقصى للفلترة المحلية (غير فعال للبيانات الضخمة)
+      final allProductsSnapshot = await _productsCol.limit(200).get();
+
+      productResults.addAll(allProductsSnapshot.docs.where((d) {
+        final data = d.data();
+        final name = (data['title'] ?? data['name'] ?? '').toString().toLowerCase();
+        final desc = (data['description'] ?? data['desc'] ?? '').toString().toLowerCase();
+
+        return name.contains(_searchQuery) || desc.contains(_searchQuery);
+      }).map((d) {
+        final data = d.data();
+        data['id'] = d.id;
+        data['type'] = 'product'; // تحديد نوع النتيجة
+        return data;
+      }).toList());
+    }
+
+    // 5. دمج النتائج (المتاجر أولاً ثم المنتجات)
+    final combinedResults = <Map<String, dynamic>>[];
+    combinedResults.addAll(shopsByCat);
+    combinedResults.addAll(productResults);
+
+    return combinedResults;
+  }
+
+
+  // 💡 التعديل 5: استخدام FutureBuilder بدلاً من StreamBuilder لعرض النتائج
+  Widget _buildStoresList() {
+    // 🛑 يتم إعادة تشغيل FutureBuilder في كل مرة تتغير فيها _searchQuery أو _selectedCat
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _fetchSearchResults(),
       builder: (context, snap) {
-        // ✅ عرض أي خطأ (صلاحيات/قواعد) بشكل واضح
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
         if (snap.hasError) {
           return Center(
             child: Padding(
@@ -215,103 +292,87 @@ class _HomePageState extends State<HomePage> {
           );
         }
 
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        final finalFilteredList = snap.data ?? [];
 
-        final docs = snap.data?.docs ?? [];
-
-        // تطبيق تصنيف المستخدم محليًا
-        List<QueryDocumentSnapshot<Map<String, dynamic>>> byCat;
-        if (_selectedCat == 0) {
-          byCat = docs;
-        } else {
-          final selectedName = _selectedCategoryNameFromStream();
-          if (selectedName.isEmpty) {
-            byCat = docs;
-          } else {
-            byCat = docs.where((d) {
-              final shopCat = (d.data()['category'] ?? '').toString();
-              return shopCat.toLowerCase() == selectedName.toLowerCase();
-            }).toList();
-          }
-        }
-
-        if (byCat.isEmpty) {
-          return const Center(child: Text('No shops to show'));
+        if (finalFilteredList.isEmpty) {
+          final message = (_searchQuery.isEmpty && _selectedCat == 0)
+              ? 'No shops to show'
+              : 'No results found for "$_searchQuery" or selected category.';
+          return Center(child: Text(message));
         }
 
         return ListView.separated(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          itemCount: byCat.length,
+          itemCount: finalFilteredList.length,
           separatorBuilder: (_, __) => const Divider(height: 1),
           itemBuilder: (context, index) {
-            final d = byCat[index];
-            final data = d.data();
+            final item = finalFilteredList[index];
+            final type = item['type'] ?? 'shop';
 
-            final name   = (data['name'] ?? 'Shop').toString();
-            final desc   = (data['about'] ?? data['description'] ?? '').toString();
-            final logoUrl= (data['logoUrl'] ?? '').toString();
-            final rating = (data['rating'] ?? 4.6).toString();
+            if (type == 'shop') {
+              // منطق عرض المتجر
+              final name   = (item['name'] ?? 'Shop').toString();
+              final desc   = (item['about'] ?? item['description'] ?? '').toString();
+              final logoUrl= (item['logoUrl'] ?? '').toString();
+              // final rating = (item['rating'] ?? 4.6).toString(); // (لا تستخدم rating للمتاجر حالياً)
 
-            return ListTile(
-              contentPadding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              leading: _ShopAvatar(logoUrl: logoUrl),
-              title: Text(
-                name,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: kTextDark,
-                ),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 2),
-                  Text(
-                    desc,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.black54, height: 1.2),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(Icons.star_rounded,
-                          color: Colors.amber.shade600, size: 18),
-                      const SizedBox(width: 4),
-                      Text(
-                        double.tryParse(rating)?.toStringAsFixed(1) ?? '4.6',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(width: 10),
-                      const Text(
-                        '• Open',
-                        style: TextStyle(
-                          color: kPrimary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              trailing: const Icon(Icons.chevron_right_rounded,
-                  color: Colors.black45),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => StorePage(
-                      storeId: d.id,          // ← التعديل الوحيد
-                      storeName: name,
-                      storeLogo: logoUrl,
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                leading: _ShopAvatar(logoUrl: logoUrl),
+                title: Text(name, style: const TextStyle(fontWeight: FontWeight.w700, color: kTextDark)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 2),
+                    Text(desc, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54, height: 1.2)),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const SizedBox(width: 10),
+                        const Text('• Open', style: TextStyle(color: kPrimary, fontWeight: FontWeight.w600)),
+                      ],
                     ),
-                  ),
-                );
-              },
-            );
+                  ],
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded, color: Colors.black45),
+                onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => StorePage(
+                    storeId: item['id'],
+                    storeName: name,
+                    storeLogo: logoUrl,
+                  )));
+                },
+              );
+            } else {
+              // منطق عرض المنتج
+              final name = (item['title'] ?? item['name'] ?? 'Product').toString();
+              final price = (item['price'] as num? ?? 0.0).toDouble().toStringAsFixed(2);
+              final imageUrl = (item['imageUrl'] ?? item['image'] ?? '').toString();
+
+              // 💡 نحتاج إلى كائن Product للانتقال لصفحة التفاصيل
+              // (سأفترض أنكِ ستضيفين كلاس Product لتجنب التعقيد الآن، أو يمكن الانتقال للمتجر)
+              final isProductAvailable = item.containsKey('storeId'); // تحقق بسيط
+
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                leading: _ProductSearchAvatar(imageUrl: imageUrl),
+                title: Text(
+                  '$name (Product)',
+                  style: const TextStyle(fontWeight: FontWeight.w700, color: kPrimary),
+                ),
+                subtitle: Text(
+                  'Price: $price JD',
+                  style: const TextStyle(color: Colors.black54, height: 1.2),
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded, color: Colors.black45),
+                onTap: () {
+                  // هنا يمكنك الانتقال لصفحة تفاصيل المنتج إذا كان لديك الـ Model جاهز
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Viewing product: $name')),
+                  );
+                },
+              );
+            }
           },
         );
       },
@@ -494,5 +555,38 @@ class _ShopAvatar extends StatelessWidget {
       borderRadius: BorderRadius.circular(22),
     ),
     child: const Icon(Icons.store, color: Color(0xFF7C8A98)),
+  );
+}
+
+// 💡 التعديل 6: صورة المنتج (شبكة أو رمز افتراضي)
+class _ProductSearchAvatar extends StatelessWidget {
+  const _ProductSearchAvatar({required this.imageUrl});
+  final String imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    if (imageUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          imageUrl,
+          width: 44,
+          height: 44,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _fallback(),
+        ),
+      );
+    }
+    return _fallback();
+  }
+
+  Widget _fallback() => Container(
+    width: 44,
+    height: 44,
+    decoration: BoxDecoration(
+      color: _HomePageState.kBorder,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: const Icon(Icons.shopping_bag_outlined, color: _HomePageState.kHint),
   );
 }

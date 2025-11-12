@@ -77,8 +77,12 @@ class MyOrdersPage extends StatelessWidget {
                         final total = (d['total'] is num)
                             ? (d['total'] as num).toDouble()
                             : 0.0;
+                        // 💡 جلب حالة التقييم (افتراضياً 'false' إذا لم يكن موجوداً)
+                        final isRated = d['isRated'] as bool? ?? false;
+
                         final items = (d['items'] as List? ?? [])
                             .map((e) => _OrderItemView.fromMap(e))
+                            .whereType<_OrderItemView>()
                             .toList();
 
                         return _OrderCardFS(
@@ -86,6 +90,7 @@ class MyOrdersPage extends StatelessWidget {
                           status: status,
                           total: total,
                           items: items,
+                          isRated: isRated, // 💡 تمرير حالة التقييم
                         );
                       },
                     );
@@ -129,20 +134,37 @@ class MyOrdersPage extends StatelessWidget {
   }
 }
 
+// 🛑 التعديل هنا: إضافة productId
 class _OrderItemView {
   final String title;
+  final String productId; // 🛑 جديد: نحتاج معرف المنتج
   final int qty;
   final double price;
   double get lineTotal => price * qty;
 
-  _OrderItemView({required this.title, required this.qty, required this.price});
+  _OrderItemView({
+    required this.title,
+    required this.productId,
+    required this.qty,
+    required this.price,
+  });
 
   factory _OrderItemView.fromMap(dynamic m) {
     final map = (m as Map?) ?? {};
     final price = map['price'] is num ? (map['price'] as num).toDouble() : 0.0;
     final qty = map['qty'] is num ? (map['qty'] as num).toInt() : 0;
     final title = (map['title'] ?? '').toString();
-    return _OrderItemView(title: title, qty: qty, price: price);
+
+    // 🛑 التعديل المطلوب: جلب الـ ID
+    // نبحث عن 'id' (المحتمل) أو 'productId' كافتراض أول
+    final productId = (map['id'] ?? map['productId'] ?? '').toString();
+
+    return _OrderItemView(
+      title: title,
+      productId: productId,
+      qty: qty,
+      price: price,
+    );
   }
 }
 
@@ -152,12 +174,14 @@ class _OrderCardFS extends StatelessWidget {
     required this.status,
     required this.total,
     required this.items,
+    required this.isRated, // 💡 جديد: حالة تقييم الطلب
   });
 
   final String orderId;
   final String status; // pending | confirmed | completed | cancelled
   final double total;
   final List<_OrderItemView> items;
+  final bool isRated; // 💡 جديد
 
   Color _statusColor(String s) {
     switch (s) {
@@ -273,6 +297,24 @@ class _OrderCardFS extends StatelessWidget {
             ),
             const SizedBox(height: 10),
 
+            // 🛑 إضافة زر التقييم هنا: يظهر فقط إذا كان 'completed' ولم يتم تقييمه
+            if (status == 'completed' && !isRated)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: InkWell(
+                  // 💡 استدعاء دالة عرض الـ Dialog
+                  onTap: () => _showRatingDialog(context, orderId, items),
+                  child: const Text(
+                    '⭐ Rate this Order',
+                    style: TextStyle(
+                      color: Color(0xFF3B82F6), // لون أزرق جذاب
+                      fontWeight: FontWeight.bold,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
+
             // أزرار الحالة وفق قواعد الصلاحيات للمستخدم
             if (status == 'pending')
               SizedBox(
@@ -325,6 +367,12 @@ class _OrderCardFS extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  // 💡 إظهار علامة Rated إذا تم التقييم
+                  if (isRated)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 8.0),
+                      child: Text('(Rated)', style: TextStyle(fontSize: 12, color: MyOrdersPage.kHint)),
+                    ),
                 ],
               ),
           ],
@@ -464,4 +512,164 @@ class _BottomBar extends StatelessWidget {
       ),
     );
   }
+}
+
+
+// 🛑🛑 الدوال المساعدة لنظام التقييم (تم تصحيحها) 🛑🛑
+
+// 💡 عنصر النجمة التفاعلي
+typedef RatingUpdateCallback = void Function(double newRating);
+Widget _buildRatingStars(double currentRating, RatingUpdateCallback onRatingUpdate) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: List.generate(5, (index) {
+      final ratingValue = (index + 1).toDouble();
+      final isSelected = currentRating >= ratingValue;
+
+      return InkWell(
+        onTap: () => onRatingUpdate(ratingValue),
+        child: Icon(
+          Icons.star_rounded,
+          size: 30,
+          color: isSelected ? Colors.amber : Colors.grey.shade300,
+        ),
+      );
+    }),
+  );
+}
+
+// 💡 واجهة حوار التقييم
+void _showRatingDialog(BuildContext context, String orderId, List<_OrderItemView> items) {
+  // 💡 خريطة لتخزين تقييم كل منتج بشكل مؤقت (product_id: rating_value)
+  Map<String, double> productRatings =
+  Map.fromIterable(items, key: (item) => item.productId, value: (item) => 0.0);
+
+  showDialog(
+    context: context,
+    builder: (BuildContext dialogContext) {
+      return AlertDialog(
+        title: const Text('Rate Your Items', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: StatefulBuilder(
+          builder: (BuildContext context, StateSetter setState) {
+            return SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: items.map((item) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.title, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        _buildRatingStars(
+                          productRatings[item.productId]!,
+                              (newRating) => setState(() {
+                            productRatings[item.productId] = newRating;
+                          }),
+                        ),
+                        const Divider(height: 20),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            );
+          },
+        ),
+        actions: <Widget>[
+          TextButton(
+            child: const Text('Cancel', style: TextStyle(color: Colors.red)),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              if (productRatings.values.any((r) => r > 0)) {
+                _submitRatings(context, productRatings, orderId);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please select at least one star for an item.')),
+                );
+              }
+            },
+            child: const Text('Submit Ratings'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+
+// 💡 دالة إرسال التقييمات إلى Firestore (تم تصحيحها لتعريف firestore بشكل صحيح)
+Future<void> _submitRatings(BuildContext context, Map<String, double> ratings, String orderId) async {
+  final firestore = FirebaseFirestore
+      .instance; // ✅ تم إضافة تعريف firestore هنا
+  final userId = FirebaseAuth.instance.currentUser?.uid;
+  if (userId == null) return;
+
+  try {
+    for (var entry in ratings.entries) {
+      final productId = entry.key;
+      final newRating = entry.value;
+
+      if (newRating > 0 && productId.isNotEmpty) {
+        // 1. 💾 حفظ تقييم المستخدم الجديد:
+        final productRef = firestore.collection('products').doc(
+            productId); // ✅ تم تعريف productRef هنا
+
+        await productRef.collection('ratings').doc(userId).set({
+          'rating': newRating,
+          'ratedAt': FieldValue.serverTimestamp(),
+          'orderId': orderId,
+        });
+
+        // 2. 🧮 حساب المتوسط الجديد وتحديث وثيقة المنتج
+        await _calculateAndUpdateAverageRating(productRef,newRating);
+      }
+    }
+
+    // 3. 📝 تحديث الطلب للإشارة إلى أنه تم تقييمه
+    await firestore.collection('orders').doc(orderId).update({'isRated': true});
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+          content: Text('Thank you! Ratings submitted successfully.')),
+    );
+  } on FirebaseException catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to submit ratings: ${e.message}')),
+    );
+  }
+}
+
+// 💡 دالة لحساب متوسط التقييمات وتحديث وثيقة المنتج (باستخدام Transaction)
+Future<void> _calculateAndUpdateAverageRating(DocumentReference productRef , double newRating) async {
+  final firestore = FirebaseFirestore.instance; // ✅ تم إضافة تعريف firestore هنا
+
+  await firestore.runTransaction((transaction) async {
+    // 1. قراءة أحدث لقطة للتقييمات ضمن المعامل
+    final productSnapshot = await transaction.get(productRef);
+    final data= productSnapshot.data() as Map<String,dynamic>??{};
+
+
+    // (يجب أن نستخدم حقولاً جديدة: totalRatingSum لحفظ المجموع الكلي)
+    final double currentSum = (data['totalRatingSum'] as num? ?? 0.0).toDouble();
+    final int currentCount = (data['ratingsCount'] as num? ?? 0).toInt();
+
+    // 2. حساب القيم الجديدة
+    final double newSum = currentSum + newRating;
+    final int newCount = currentCount + 1;
+    final double newAvgRating = newSum / newCount;
+
+    // 3. تحديث الوثيقة ضمن المعامل بالقيم الجديدة
+    transaction.update(productRef, {
+      'avgRating': newAvgRating,
+      'ratingsCount': newCount,
+      // 💡 حفظ المجموع الكلي الجديد لعمليات الحساب المستقبلية
+      'totalRatingSum': newSum,
+
+    });
+  });
 }

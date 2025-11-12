@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../data/cart_repo.dart';
 import 'checkout_page.dart'; // ← جديد
+import 'rating_display.dart'; // ✅ الاستيراد الجديد
+// تأكدي أن هذا المسار صحيح: import 'rating_display.dart';
 
 class CartPage extends StatelessWidget {
   const CartPage({super.key});
@@ -108,17 +110,18 @@ class _CartItemCard extends StatelessWidget {
                       const SizedBox(height: 4),
                       Row(
                         children: [
-                          ...List.generate(5, (i) {
-                            final filled = (p.rating >= i + 1);
-                            return Icon(
-                              filled ? Icons.star_rounded : Icons.star_border_rounded,
-                              size: 18,
-                              color: Colors.amber,
-                            );
-                          }),
-                          const SizedBox(width: 6),
-                          Text(p.rating.toStringAsFixed(1),
-                              style: const TextStyle(color: kHint)),
+                          // ❌ الكود القديم: كان هنا نص فقط 'p.rating.toStringAsFixed(1)'
+
+                          // ✅ الكود الجديد: استخدام RatingDisplay
+                          RatingDisplay(
+                            avgRating: item.avgRating,
+                            ratingsCount: item.ratingsCount,
+                            starSize: 18,
+                            textSize: 14,
+                          ),
+
+                          // const SizedBox(width: 6), // تم دمج هذه المساحات داخل RatingDisplay
+                          // Text(p.rating.toStringAsFixed(1), style: const TextStyle(color: kHint)),
                         ],
                       ),
                       const SizedBox(height: 8),

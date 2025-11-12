@@ -1,3 +1,18 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        // 🔴 هذا السطر يجب إضافته لتمكين Firebase
+        classpath("com.google.gms:google-services:4.4.1") // يمكنك استخدام أحدث إصدار
+    }
+}
+
+// ----------------------------------------------------
+// ✅ الكود الأصلي الذي أرسلته (يجب وضعه هنا تحت buildscript)
+// ----------------------------------------------------
+
 allprojects {
     repositories {
         google()
