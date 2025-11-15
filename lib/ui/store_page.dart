@@ -16,10 +16,19 @@ import 'product_detail_page.dart';
 import '../data/favorites_repo.dart';
 import 'rating_display.dart'; // ✅ تأكد من وجود هذا الاستيراد
 
-class StorePage extends StatelessWidget {
+// 🛑 كلاس مساعد لحالة المتجر
+class StoreStatusResult {
+  final bool isOpen;
+  final String message; // مثال: (Open now (9:00 - 17:00) / Closed now. Opens at 9:00)
+
+  StoreStatusResult(this.isOpen, this.message);
+}
+
+// 💡 التعديل 1: تحويل StorePage إلى StatefulWidget
+class StorePage extends StatefulWidget {
   const StorePage({
     super.key,
-    required this.storeId,   // ← معرف المتجر (هو نفسه id وثيقة shops)
+    required this.storeId, // ← معرف المتجر (هو نفسه id وثيقة shops)
     required this.storeName,
     this.storeLogo,
   });
@@ -29,12 +38,129 @@ class StorePage extends StatelessWidget {
   final String? storeLogo;
 
   @override
-  Widget build(BuildContext context) {
-    const green = Color(0xFF34D399);
-    const textDark = Color(0xFF222222);
-    const hint = Color(0xFF9AA0A6);
-    const border = Color(0xFFE5E7EB);
+  State<StorePage> createState() => _StorePageState();
+}
 
+class _StorePageState extends State<StorePage> {
+  // 💡 الألوان (لتكون متاحة داخل الـ State)
+  static const green = Color(0xFF34D399);
+  static const textDark = Color(0xFF222222);
+  static const hint = Color(0xFF9AA0A6);
+  static const border = Color(0xFFE5E7EB);
+  static const red = Color(0xFFEF4444);
+
+  // 💡 التعديل 2: متغيرات الحالة للبحث وحالة المتجر
+  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+  // 🛑 متغير لتخزين حالة المتجر الديناميكية
+  StoreStatusResult _storeStatus = StoreStatusResult(true, 'Loading...');
+
+  // 💡 التعديل 3: التخلص من المتحكم
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // 🛑 دالة منطق حساب حالة المتجر (مأخوذة من HomePage)
+  StoreStatusResult _getStoreStatus(Map<String, dynamic>? workingHours) {
+    if (workingHours == null || workingHours.isEmpty) {
+      // إذا لم يتم تحديد الأوقات، نعتبره مفتوحاً مؤقتاً لتجنب إغلاق المتاجر غير المهيئة
+      return StoreStatusResult(true, 'Open (Hours not fully configured)');
+    }
+
+    final now = DateTime.now();
+    final dayKeys = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    // now.weekday يعطي 1 للإثنين و 7 للأحد، لذا نضبط الفهرس
+    final currentDayKey = dayKeys[(now.weekday - 1) % 7];
+
+    final todayHours = workingHours[currentDayKey] as Map<String, dynamic>?;
+
+    if (todayHours == null || todayHours['status'] == 'closed') {
+      return StoreStatusResult(false, 'Closed today.');
+    }
+
+    try {
+      final startTimeStr = todayHours['start'] as String; // e.g., "09:00"
+      final endTimeStr = todayHours['end'] as String;     // e.g., "17:00"
+
+      final nowTimeMinutes = now.hour * 60 + now.minute;
+
+      final startParts = startTimeStr.split(':').map(int.parse).toList();
+      final startTimeMinutes = startParts[0] * 60 + startParts[1];
+
+      final endParts = endTimeStr.split(':').map(int.parse).toList();
+      final endTimeMinutes = endParts[0] * 60 + endParts[1];
+
+      // التحقق من الحالة
+      if (nowTimeMinutes >= startTimeMinutes && nowTimeMinutes < endTimeMinutes) {
+        return StoreStatusResult(true, 'Open now ($startTimeStr - $endTimeStr)');
+      } else if (nowTimeMinutes < startTimeMinutes) {
+        return StoreStatusResult(false, 'Closed now. Opens at $startTimeStr.');
+      } else {
+        return StoreStatusResult(false, 'Closed. Reopens tomorrow.');
+      }
+
+    } catch (e) {
+      // إذا كان هناك خطأ في تنسيق البيانات
+      return StoreStatusResult(true, 'Open (Hours data error)');
+    }
+  }
+
+
+  // 💡 التعديل 4: شريط البحث المُحسَّن
+  Widget _buildSearch() {
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: border.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          hintText: 'Search products in ${widget.storeName}...',
+          prefixIcon: const Icon(Icons.search_rounded, color: hint),
+          hintStyle: const TextStyle(color: hint, fontSize: 14),
+          filled: false,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+        ),
+        onChanged: (value) {
+          setState(() {
+            _searchQuery = value.toLowerCase().trim();
+          });
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 🛑 StreamBuilder لجلب بيانات المتجر (بما فيها أوقات العمل)
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('shops').doc(widget.storeId).snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          // يمكن عرض تخطيط أساسي بينما يتم التحميل
+          return _buildScaffold(context, StoreStatusResult(true, 'Loading store data...'), isDataLoading: true);
+        }
+
+        final data = snapshot.data?.data() as Map<String, dynamic>?;
+        final workingHours = data?['workingHours'] as Map<String, dynamic>?;
+
+        // 🛑 تحديث حالة المتجر
+        _storeStatus = _getStoreStatus(workingHours);
+
+        // بناء الواجهة بعد جلب البيانات
+        return _buildScaffold(context, _storeStatus);
+      },
+    );
+  }
+
+  // 🛑 دالة بناء Scaffold منفصلة لاستخدامها داخل الـ StreamBuilder
+  Widget _buildScaffold(BuildContext context, StoreStatusResult status, {bool isDataLoading = false}) {
     return Scaffold(
       backgroundColor: Colors.white,
 
@@ -82,18 +208,18 @@ class StorePage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SearchBar(),
+              _buildSearch(),
               const SizedBox(height: 12),
 
-              // سطر اسم المتجر + أيقونات
+              // سطر اسم المتجر + أيقونات + حالة المتجر
               Row(
                 children: [
-                  if (storeLogo != null)
+                  if (widget.storeLogo != null)
                     Padding(
                       padding: const EdgeInsets.only(right: 8.0),
                       child: CircleAvatar(
                         backgroundColor: border,
-                        backgroundImage: NetworkImage(storeLogo!),
+                        backgroundImage: NetworkImage(widget.storeLogo!),
                         radius: 14,
                       ),
                     )
@@ -103,13 +229,28 @@ class StorePage extends StatelessWidget {
                       child: Icon(Icons.local_cafe, color: textDark),
                     ),
                   Expanded(
-                    child: Text(
-                      storeName,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: textDark,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.storeName,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: textDark,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        // 🛑 عرض حالة المتجر
+                        Text(
+                          'Status: ${status.message}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: status.isOpen ? green : red,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   // أيقونة الرسالة → محادثة حقيقية
@@ -119,8 +260,8 @@ class StorePage extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (_) => _ChatScreen(
-                            storeId: storeId,
-                            storeName: storeName,
+                            storeId: widget.storeId,
+                            storeName: widget.storeName,
                           ),
                         ),
                       );
@@ -135,9 +276,15 @@ class StorePage extends StatelessWidget {
               ),
               const SizedBox(height: 8),
 
-              // شبكة المنتجات (حقيقية من Firestore) — باستخدام storeId مباشرة
+              // شبكة المنتجات (حقيقية من Firestore)
               Expanded(
-                child: _StoreProductsGrid(storeId: storeId),
+                child: isDataLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _StoreProductsGrid(
+                  storeId: widget.storeId,
+                  searchQuery: _searchQuery,
+                  isShopOpen: status.isOpen, // 🛑 تمرير حالة الفتح
+                ),
               ),
             ],
           ),
@@ -149,9 +296,15 @@ class StorePage extends StatelessWidget {
 
 /// تعرض منتجات المتجر مباشرة بتمرير storeId (id وثيقة shops)
 class _StoreProductsGrid extends StatelessWidget {
-  const _StoreProductsGrid({required this.storeId});
+  const _StoreProductsGrid({
+    required this.storeId,
+    required this.searchQuery,
+    required this.isShopOpen, // 🛑 استقبال حالة الفتح
+  });
 
   final String storeId;
+  final String searchQuery;
+  final bool isShopOpen; // 🛑 حالة المتجر
 
   @override
   Widget build(BuildContext context) {
@@ -171,13 +324,34 @@ class _StoreProductsGrid extends StatelessWidget {
           return const Center(child: CircularProgressIndicator());
         }
         final docs = prodSnap.data?.docs ?? [];
-        if (docs.isEmpty) {
-          return const Center(child: Text('No products to show'));
+
+        // 💡 التعديل 6: تطبيق الفلترة المحلية بناءً على نص البحث
+        final List<QueryDocumentSnapshot<Map<String, dynamic>>> filteredDocs;
+
+        if (searchQuery.isEmpty) {
+          filteredDocs = docs;
+        } else {
+          filteredDocs = docs.where((d) {
+            final data = d.data();
+            final name = (data['name'] ?? '').toString().toLowerCase();
+            final desc = (data['description'] ?? data['desc'] ?? '').toString().toLowerCase();
+
+            // تحقق من تطابق الاسم أو الوصف مع نص البحث
+            return name.contains(searchQuery) || desc.contains(searchQuery);
+          }).toList();
         }
 
+        if (filteredDocs.isEmpty) {
+          final message = searchQuery.isEmpty
+              ? 'No products to show'
+              : 'No results found for "$searchQuery"';
+          return Center(child: Text(message));
+        }
+
+        // 🛑 استخدام القائمة المفلترة
         return GridView.builder(
           padding: EdgeInsets.zero,
-          itemCount: docs.length,
+          itemCount: filteredDocs.length,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             mainAxisSpacing: 12,
@@ -186,26 +360,24 @@ class _StoreProductsGrid extends StatelessWidget {
             childAspectRatio: .66,
           ),
           itemBuilder: (context, index) {
-            final d = docs[index].data();
+            final d = filteredDocs[index].data();
             // تحويل وثيقة Firestore -> Product موديل التطبيق
             final product = Product(
-              id: docs[index].id,
+              id: filteredDocs[index].id,
               title: (d['name'] ?? 'Product').toString(),
               desc: (d['description'] ?? d['desc'] ?? '').toString(),
               price: (d['price'] is num)
                   ? (d['price'] as num).toDouble()
                   : double.tryParse('${d['price']}') ?? 0,
               image: (d['imageUrl'] ?? d['image'] ?? '').toString(),
-              // الحقول القديمة (للتوافق مع باقي الصفحات)
-
               storeId: (d['storeId'] ?? '').toString(),
-              // الحقول الجديدة لـ RatingDisplay
               avgRating: (d['avgRating'] as num? ?? 0.0).toDouble(),
               ratingsCount: (d['ratingsCount'] as num? ?? 0).toInt(),
             );
 
             return _ProductCardUI(
               product: product,
+              isShopOpen: isShopOpen, // 🛑 تمرير حالة الفتح
               onOpenDetails: () {
                 Navigator.push(
                   context,
@@ -214,14 +386,24 @@ class _StoreProductsGrid extends StatelessWidget {
                   ),
                 );
               },
+              // 🛑 تعديل دالة onCart لإظهار تحذير في حال الإغلاق
               onCart: () {
+                if (!isShopOpen) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Cannot add to cart. The shop is currently closed.'),
+                      backgroundColor: _StorePageState.red,
+                    ),
+                  );
+                  return;
+                }
+
                 CartRepo.instance.add(product);
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const CartPage()),
                 );
               },
-              // ✅ القلب يضيف للـ FavoritesRepo فقط
               onWishlist: () {
                 FavoritesRepo.instance.add(product);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -384,16 +566,19 @@ class _ProductCardUI extends StatelessWidget {
     required this.onOpenDetails,
     required this.onCart,
     required this.onWishlist,
+    required this.isShopOpen, // 🛑 استقبال حالة المتجر
   });
 
   final Product product;
   final VoidCallback onOpenDetails;
   final VoidCallback onCart;
   final VoidCallback onWishlist;
+  final bool isShopOpen; // 🛑 حالة المتجر
 
   static const textDark = Color(0xFF222222);
   static const hint = Color(0xFF9AA0A6);
   static const border = Color(0xFFE5E7EB);
+  static const green = Color(0xFF34D399);
 
   @override
   Widget build(BuildContext context) {
@@ -474,10 +659,8 @@ class _ProductCardUI extends StatelessWidget {
                   // سطر الأيقونات
                   Row(
                     children: [
-                      // تم حذف عرض عدد المراجعات القديم
-
                       const Spacer(),
-                      // القلب → Wishlist (الاستدعاء يُمرَّر من الأعلى)
+                      // القلب → Wishlist
                       IconButton(
                         onPressed: onWishlist,
                         icon: const Icon(Icons.favorite_border, size: 18),
@@ -489,8 +672,12 @@ class _ProductCardUI extends StatelessWidget {
                       // السلة → يضيف ويفتح Cart
                       IconButton(
                         onPressed: onCart,
-                        icon: const Icon(Icons.shopping_cart_outlined, size: 18),
-                        color: Color(0xFF34D399),
+                        // 🛑 تغيير اللون إذا كان المتجر مغلقاً
+                        icon: Icon(
+                            Icons.shopping_cart_outlined,
+                            size: 18,
+                            color: isShopOpen ? green : Colors.grey.shade400
+                        ),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                       ),
@@ -511,9 +698,6 @@ class _ProductCardUI extends StatelessWidget {
   }
 }
 
-/// مستودع Wishlist بسيط داخل الصفحة (بدون تعديل ملفات أخرى)
-
-
 /// شاشة محادثة حقيقية – تحفظ وتقرأ من Firestore
 class _ChatScreen extends StatefulWidget {
   const _ChatScreen({required this.storeId, required this.storeName});
@@ -532,6 +716,12 @@ class _ChatScreenState extends State<_ChatScreen> {
   void initState() {
     super.initState();
     _ensureConversation();
+  }
+
+  @override
+  void dispose() {
+    _txt.dispose();
+    super.dispose();
   }
 
   Future<void> _ensureConversation() async {
@@ -628,7 +818,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                   return const Center(
                       child: Text('Start chatting with the store…'));
                 }
-                final uid = FirebaseAuth.instance.currentUser?.uid;
+                // final uid = FirebaseAuth.instance.currentUser?.uid; // غير مستخدم
                 return ListView.builder(
                   reverse: true,
                   itemCount: msgs.length,

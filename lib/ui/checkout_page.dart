@@ -20,8 +20,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
   static const kBorder = Color(0xFFE5E7EB);
   static const kError = Color(0xFFE7625F); // للخصم والرسائل
 
-  // إعدادات الضرائب/الخصم
-  static const double _taxRate = 0.067; // ~6.7%
+  // 🛑 المتغيرات الجديدة لجلب حالة الضريبة
+  double _fetchedTaxRate = 0.0; // القيمة الافتراضية 0%
+  late Future<void> _taxRateFuture;
+
   final _couponCtrl = TextEditingController();
 
   // 🛑 حالات الكوبون المطبقة
@@ -34,9 +36,50 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return CartRepo.instance.items.firstOrNull?.product.storeId;
   }
 
+  // 🛑 دالة جلب نسبة الضريبة من Firestore
+  Future<void> _fetchTaxRate() async {
+    final storeId = _storeId;
+    if (storeId == null) {
+      // لا يوجد منتجات، لا يوجد متجر، تبقى القيمة الافتراضية (0.0)
+      return;
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('shops')
+          .doc(storeId)
+          .get();
+
+      if (doc.exists) {
+        final data = doc.data();
+        // قيمة الضريبة محفوظة كـ (0.16)
+        final rate = (data?['taxRate'] as num?);
+
+        setState(() {
+          // إذا كانت القيمة موجودة وصالحة، نستخدمها، وإلا تبقى 0.0
+          _fetchedTaxRate = rate?.toDouble() ?? 0.0;
+        });
+
+        print('Tax Rate fetched successfully: ${_fetchedTaxRate * 100}%');
+      } else {
+        // وثيقة المتجر غير موجودة
+        setState(() {
+          _fetchedTaxRate = 0.0;
+        });
+      }
+    } catch (e) {
+      print('Error fetching tax rate: $e');
+      setState(() {
+        _fetchedTaxRate = 0.0;
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    // 🛑 بدء عملية جلب الضريبة
+    _taxRateFuture = _fetchTaxRate();
     if (_couponValue() > 0) {
       _couponStatusMessage = 'Coupon applied.';
     }
@@ -191,351 +234,370 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ),
       ),
       body: SafeArea(
-        child: AnimatedBuilder(
-          animation: CartRepo.instance,
-          builder: (_, __) {
-            final items = CartRepo.instance.items;
-            final storeId = _storeId; // جلب الـ Store ID
+        // 🛑 تغليف الـ Body بالـ FutureBuilder لجلب قيمة الضريبة أولاً
+        child: FutureBuilder(
+          future: _taxRateFuture,
+          builder: (context, snapshot) {
+            // عرض دائرة التحميل أثناء جلب الضريبة
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-            final rawSubtotal = CartRepo.instance.totalAmount;
-            // 🛑 قيمة الخصم الفعلي
-            final discountAmount = _couponValue();
+            // بمجرد الانتهاء من جلب الضريبة، نعرض المحتوى
+            return AnimatedBuilder(
+              animation: CartRepo.instance,
+              builder: (_, __) {
+                final items = CartRepo.instance.items;
+                final storeId = _storeId; // جلب الـ Store ID
 
-            // 🛑 حساب الإجمالي بعد الخصم
-            final orderSubtotalAfterDiscount =
-            (rawSubtotal - discountAmount).clamp(0.0, double.infinity);
+                final rawSubtotal = CartRepo.instance.totalAmount;
+                // 🛑 قيمة الخصم الفعلي
+                final discountAmount = _couponValue();
 
-            final tax =
-            double.parse((orderSubtotalAfterDiscount * _taxRate).toStringAsFixed(2));
-            final total = (orderSubtotalAfterDiscount + tax).clamp(0.0, double.infinity);
+                // 🛑 حساب الإجمالي بعد الخصم
+                final orderSubtotalAfterDiscount =
+                (rawSubtotal - discountAmount).clamp(0.0, double.infinity);
 
-            return Column(
-              children: [
-                // المنتجات
-                Flexible(
-                  fit: FlexFit.loose,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    itemCount: items.length,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (_, i) {
-                      final it = items[i];
-                      final p = it.product;
-                      return Container(
-                        // كود عرض المنتجات الأصلي
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          border: Border.all(color: kBorder),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.all(10),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.network(
-                                p.image,
-                                width: 90,
-                                height: 90,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  width: 90,
-                                  height: 90,
-                                  color: Colors.grey.shade200,
-                                ),
-                              ),
+                // 🛑 استخدام قيمة الضريبة المجلوبة (_fetchedTaxRate)
+                final taxRate = _fetchedTaxRate; // مثل 0.16 أو 0.0
+
+                final tax =
+                double.parse((orderSubtotalAfterDiscount * taxRate).toStringAsFixed(2));
+                final total = (orderSubtotalAfterDiscount + tax).clamp(0.0, double.infinity);
+
+                return Column(
+                  children: [
+                    // المنتجات (الكود كما هو)
+                    Flexible(
+                      fit: FlexFit.loose,
+                      child: ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                        itemCount: items.length,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        separatorBuilder: (_, __) => const SizedBox(height: 12),
+                        itemBuilder: (_, i) {
+                          final it = items[i];
+                          final p = it.product;
+                          return Container(
+                            // كود عرض المنتجات الأصلي
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              border: Border.all(color: kBorder),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    p.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: kTextDark,
-                                      fontWeight: FontWeight.w700,
+                            padding: const EdgeInsets.all(10),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(
+                                    p.image,
+                                    width: 90,
+                                    height: 90,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      width: 90,
+                                      height: 90,
+                                      color: Colors.grey.shade200,
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-
-                                  Row(
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      _qtyButton(
-                                        icon: Icons.remove_rounded,
-                                        onTap: () =>
-                                            CartRepo.instance.decrement(p.id),
-                                      ),
-                                      Container(
-                                        width: 42,
-                                        alignment: Alignment.center,
-                                        margin: const EdgeInsets.symmetric(
-                                            horizontal: 6),
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8, vertical: 6),
-                                        decoration: BoxDecoration(
-                                          border:
-                                          Border.all(color: kBorder),
-                                          borderRadius:
-                                          BorderRadius.circular(8),
+                                      Text(
+                                        p.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: kTextDark,
+                                          fontWeight: FontWeight.w700,
                                         ),
-                                        child: Text('${it.qty}',
-                                            style: const TextStyle(
-                                                fontWeight:
-                                                FontWeight.w700)),
                                       ),
-                                      _qtyButton(
-                                        icon: Icons.add_rounded,
-                                        onTap: () =>
-                                            CartRepo.instance.increment(p.id),
+                                      const SizedBox(height: 4),
+
+                                      Row(
+                                        children: [
+                                          _qtyButton(
+                                            icon: Icons.remove_rounded,
+                                            onTap: () =>
+                                                CartRepo.instance.decrement(p.id),
+                                          ),
+                                          Container(
+                                            width: 42,
+                                            alignment: Alignment.center,
+                                            margin: const EdgeInsets.symmetric(
+                                                horizontal: 6),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              border:
+                                              Border.all(color: kBorder),
+                                              borderRadius:
+                                              BorderRadius.circular(8),
+                                            ),
+                                            child: Text('${it.qty}',
+                                                style: const TextStyle(
+                                                    fontWeight:
+                                                    FontWeight.w700)),
+                                          ),
+                                          _qtyButton(
+                                            icon: Icons.add_rounded,
+                                            onTap: () =>
+                                                CartRepo.instance.increment(p.id),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),
-                                ],
-                              ),
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  '${p.price.toStringAsFixed(2)} JD',
-                                  style: const TextStyle(
-                                    color: kTextDark,
-                                    fontWeight: FontWeight.w700,
-                                  ),
                                 ),
-                                const SizedBox(height: 28),
-                                IconButton(
-                                  tooltip: 'Remove',
-                                  onPressed: () =>
-                                      CartRepo.instance.remove(p.id),
-                                  icon: const Icon(
-                                      Icons.delete_outline_rounded),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      '${p.price.toStringAsFixed(2)} JD',
+                                      style: const TextStyle(
+                                        color: kTextDark,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 28),
+                                    IconButton(
+                                      tooltip: 'Remove',
+                                      onPressed: () =>
+                                          CartRepo.instance.remove(p.id),
+                                      icon: const Icon(
+                                          Icons.delete_outline_rounded),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-
-                // Apply Coupon
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
-                  child: Row(
-                    children: [
-                      const Text('Apply Coupon:',
-                          style: TextStyle(
-                              color: kTextDark,
-                              fontWeight: FontWeight.w600)),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: _couponCtrl,
-                          decoration: InputDecoration(
-                            isDense: true,
-                            hintText: 'e.g. SAVE10',
-                            hintStyle: const TextStyle(color: kHint),
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: const BorderSide(color: kBorder),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: const BorderSide(color: kBorder),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: const BorderSide(
-                                  color: kPrimary, width: 1.4),
-                            ),
-                            // 🛑 زر مسح الكوبون
-                            suffixIcon: _discountValue > 0
-                                ? IconButton(
-                              icon: const Icon(Icons.close, size: 20),
-                              onPressed: _clearCoupon,
-                            )
-                                : null,
-                          ),
-                          onSubmitted: (_) => _applyCoupon(),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                        onPressed: _applyCoupon,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: kPrimary,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        child: const Text(
-                          'apply',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // 🛑 الكوبونات المتاحة للنقر
-                if (storeId != null)
-                  _AvailableCouponsWidget(
-                    storeId: storeId,
-                    onCouponSelected: _selectAvailableCoupon,
-                    kPrimary: kPrimary,
-                  ),
-                const SizedBox(height: 8),
-
-                // رسالة حالة الكوبون
-                if (_couponStatusMessage.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        _couponStatusMessage,
-                        style: TextStyle(
-                          color: _discountValue > 0 ? kPrimary : kError,
-                          fontStyle: FontStyle.italic,
-                          fontSize: 13,
-                        ),
+                          );
+                        },
                       ),
                     ),
-                  ),
 
-                // ======= الجزء السفلي (مطابق للصورة) =======
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children: [
-                      const Divider(),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Order Payment Details',
-                          style: TextStyle(
-                            color: kTextDark,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // 🛑 إجمالي المبلغ قبل الخصم
-                      _priceRow('Subtotal:',
-                          '${rawSubtotal.toStringAsFixed(2)} JD'),
-
-                      // 🛑 عرض صف الخصم إذا كان مطبقاً
-                      if (discountAmount > 0)
-                        _priceRow('Coupon Discount:',
-                            '- ${discountAmount.toStringAsFixed(2)} JD',
-                            valueColor: kError),
-
-                      _priceRow('Tax:', '${tax.toStringAsFixed(2)} JD'),
-                      const SizedBox(height: 8),
-                      const Divider(),
-                      const SizedBox(height: 6),
-                      // 🛑 عرض الإجمالي
-                      Row(
+                    // Apply Coupon (الكود كما هو)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
+                      child: Row(
                         children: [
-                          const Text('Order Total',
+                          const Text('Apply Coupon:',
                               style: TextStyle(
                                   color: kTextDark,
-                                  fontWeight: FontWeight.w700)),
-                          const Spacer(),
-                          Text(
-                            '${total.toStringAsFixed(2)} JD',
-                            style: const TextStyle(
-                              color: kTextDark,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 16,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: _couponCtrl,
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: 'e.g. SAVE10',
+                                hintStyle: const TextStyle(color: kHint),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 10),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(color: kBorder),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(color: kBorder),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(
+                                      color: kPrimary, width: 1.4),
+                                ),
+                                // 🛑 زر مسح الكوبون
+                                suffixIcon: _discountValue > 0
+                                    ? IconButton(
+                                  icon: const Icon(Icons.close, size: 20),
+                                  onPressed: _clearCoupon,
+                                )
+                                    : null,
+                              ),
+                              onSubmitted: (_) => _applyCoupon(),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: _applyCoupon,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: kPrimary,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            child: const Text(
+                              'apply',
+                              style: TextStyle(color: Colors.white),
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
-                    ],
-                  ),
-                ),
+                    ),
 
-                // الأزرار: Proceed / Cancel
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            if (CartRepo.instance.items.isEmpty) {
-                              _toast('Your cart is empty');
-                              return;
-                            }
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => PaymentPage(
-                                  total: total,
-                                  orderSubtotal: orderSubtotalAfterDiscount,
+                    // 🛑 الكوبونات المتاحة للنقر (الكود كما هو)
+                    if (storeId != null)
+                      _AvailableCouponsWidget(
+                        storeId: storeId,
+                        onCouponSelected: _selectAvailableCoupon,
+                        kPrimary: kPrimary,
+                      ),
+                    const SizedBox(height: 8),
+
+                    // رسالة حالة الكوبون (الكود كما هو)
+                    if (_couponStatusMessage.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _couponStatusMessage,
+                            style: TextStyle(
+                              color: _discountValue > 0 ? kPrimary : kError,
+                              fontStyle: FontStyle.italic,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    // ======= الجزء السفلي ( Order Payment Details) =======
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Column(
+                        children: [
+                          const Divider(),
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Order Payment Details',
+                              style: TextStyle(
+                                color: kTextDark,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          // 🛑 إجمالي المبلغ قبل الخصم
+                          _priceRow('Subtotal:',
+                              '${rawSubtotal.toStringAsFixed(2)} JD'),
+
+                          // 🛑 عرض صف الخصم إذا كان مطبقاً
+                          if (discountAmount > 0)
+                            _priceRow('Coupon Discount:',
+                                '- ${discountAmount.toStringAsFixed(2)} JD',
+                                valueColor: kError),
+
+                          // 🛑 عرض الضريبة مع النسبة المئوية
+                          _priceRow(
+                              'Tax (${(taxRate * 100).toStringAsFixed(0)}%):',
+                              '${tax.toStringAsFixed(2)} JD'),
+
+                          const SizedBox(height: 8),
+                          const Divider(),
+                          const SizedBox(height: 6),
+                          // 🛑 عرض الإجمالي
+                          Row(
+                            children: [
+                              const Text('Order Total',
+                                  style: TextStyle(
+                                      color: kTextDark,
+                                      fontWeight: FontWeight.w700)),
+                              const Spacer(),
+                              Text(
+                                '${total.toStringAsFixed(2)} JD',
+                                style: const TextStyle(
+                                  color: kTextDark,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
                                 ),
                               ),
-                            );
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: kPrimary,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                            ],
                           ),
-                          child: const Text(
-                            'Proceed to Payment',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
+                          const SizedBox(height: 12),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
-                            CartRepo.instance.clear();
-                            Navigator.of(context).pushAndRemoveUntil(
-                              MaterialPageRoute(
-                                  builder: (_) => const HomePage()),
-                                  (r) => false,
-                            );
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            backgroundColor: const Color(0xFFE7625F),
-                            side: BorderSide.none,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                    ),
+
+                    // الأزرار: Proceed / Cancel (الكود كما هو)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () {
+                                if (CartRepo.instance.items.isEmpty) {
+                                  _toast('Your cart is empty');
+                                  return;
+                                }
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => PaymentPage(
+                                      total: total,
+                                      orderSubtotal: orderSubtotalAfterDiscount,
+                                    ),
+                                  ),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: kPrimary,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: const Text(
+                                'Proceed to Payment',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              ),
                             ),
                           ),
-                          child: const Text(
-                            'Cancel',
-                            style: TextStyle(fontWeight: FontWeight.w700),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () {
+                                CartRepo.instance.clear();
+                                Navigator.of(context).pushAndRemoveUntil(
+                                  MaterialPageRoute(
+                                      builder: (_) => const HomePage()),
+                                      (r) => false,
+                                );
+                              },
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                backgroundColor: const Color(0xFFE7625F),
+                                side: BorderSide.none,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: const Text(
+                                'Cancel',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-              ],
+                    ),
+                  ],
+                );
+              },
             );
           },
         ),

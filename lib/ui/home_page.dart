@@ -36,7 +36,7 @@ class _HomePageState extends State<HomePage> {
       FirebaseFirestore.instance.collection('categories');
   CollectionReference<Map<String, dynamic>> get _shopsCol =>
       FirebaseFirestore.instance.collection('shops');
-  // 💡 التعديل 1: مرجع المنتجات
+  // 💡 التعديل 1: مرجع المنتجات (سيتم إبقاؤه لكنه لن يستخدم في البحث)
   CollectionReference<Map<String, dynamic>> get _productsCol =>
       FirebaseFirestore.instance.collection('products');
 
@@ -46,6 +46,106 @@ class _HomePageState extends State<HomePage> {
     _searchController.dispose();
     super.dispose();
   }
+
+  // -----------------------------------------------------------
+  // 🛑 دالة منطق حساب حالة المتجر (جديدة)
+  // -----------------------------------------------------------
+  String _getStoreStatus(Map<String, dynamic>? workingHours) {
+    if (workingHours == null || workingHours.isEmpty) {
+      return 'Status unknown'; // إذا لم يتم تحديد الأوقات
+    }
+
+    final now = DateTime.now();
+    // الحصول على اليوم الحالي كنص (Mon, Tue, Wed, Thu, Fri, Sat, Sun)
+    final dayKeys = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    // now.weekday يعطي 1 للإثنين و 7 للأحد، لذا نضبط الفهرس
+    final currentDayKey = dayKeys[(now.weekday - 1) % 7];
+
+    final todayHours = workingHours[currentDayKey] as Map<String, dynamic>?;
+
+    if (todayHours == null || todayHours['status'] == 'closed') {
+      return 'Closed today';
+    }
+
+    try {
+      final startTimeStr = todayHours['start'] as String; // e.g., "09:00"
+      final endTimeStr = todayHours['end'] as String;     // e.g., "17:00"
+
+      // تحويل الوقت الحالي إلى دقائق من منتصف الليل
+      final nowTimeMinutes = now.hour * 60 + now.minute;
+
+      // تحليل وقت البدء والانتهاء إلى دقائق
+      final startParts = startTimeStr.split(':').map(int.parse).toList();
+      final startTimeMinutes = startParts[0] * 60 + startParts[1];
+
+      final endParts = endTimeStr.split(':').map(int.parse).toList();
+      final endTimeMinutes = endParts[0] * 60 + endParts[1];
+
+      // 🛑 التحقق من الحالة
+      if (nowTimeMinutes >= startTimeMinutes && nowTimeMinutes < endTimeMinutes) {
+        // مفتوح حالياً
+        return 'Open now ($startTimeStr - $endTimeStr)';
+      } else if (nowTimeMinutes < startTimeMinutes) {
+        // مغلق حالياً، سيفتح لاحقاً اليوم
+        return 'Closed now. Opens at $startTimeStr';
+      } else {
+        // مغلق حالياً، وقت العمل انتهى لهذا اليوم
+        return 'Closed. Reopens tomorrow';
+      }
+
+    } catch (e) {
+      // إذا كان هناك خطأ في تنسيق البيانات (مثلاً: "start" ليس String)
+      return 'Hours data error';
+    }
+  }
+
+  // -----------------------------------------------------------
+  // 💡 التعديل 4: دالة جلب نتائج البحث (المتاجر فقط)
+  // -----------------------------------------------------------
+  Future<List<Map<String, dynamic>>> _fetchSearchResults() async {
+    // 1. جلب جميع المتاجر النشطة (مع أوقات العمل)
+    final allShopsSnapshot = await _shopsCol.where('status', isEqualTo: 'active').get();
+
+    // 2. تطبيق فلترة البحث على المتاجر وتضمين أوقات العمل
+    final shopResults = allShopsSnapshot.docs.where((d) {
+      final data = d.data();
+      final name = (data['name'] ?? '').toString().toLowerCase();
+      final desc = (data['about'] ?? data['description'] ?? '').toString().toLowerCase();
+
+      // إذا كان البحث فارغاً، نعرض جميع المتاجر النشطة
+      if (_searchQuery.isEmpty) return true;
+
+      return name.contains(_searchQuery) || desc.contains(_searchQuery);
+    }).map((d) {
+      final data = d.data();
+      data['id'] = d.id;
+      data['type'] = 'shop'; // تحديد نوع النتيجة
+
+      // 🛑 جلب أوقات العمل وتضمينها
+      data['workingHours'] = data['workingHours'] as Map<String, dynamic>?;
+
+      return data;
+    }).toList();
+
+    // 3. فلترة المتاجر حسب التصنيف (تطبق على المتاجر فقط)
+    List<Map<String, dynamic>> shopsByCat;
+    if (_searchQuery.isEmpty && _selectedCat != 0) {
+      final selectedName = _selectedCategoryNameFromStream();
+      shopsByCat = shopResults.where((item) {
+        final shopCat = (item['category'] ?? '').toString();
+        return shopCat.toLowerCase() == selectedName.toLowerCase();
+      }).toList();
+    } else {
+      shopsByCat = shopResults;
+    }
+
+    // 4. النتيجة النهائية هي قائمة المتاجر المفلترة فقط
+    return shopsByCat;
+  }
+
+  // -----------------------------------------------------------
+  // البناء والعرض
+  // -----------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -61,15 +161,17 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 8),
             _buildCategories(),
             const Divider(height: 16),
-            Expanded(child: _buildStoresList()), // تم تعديلها لتشمل البحث عن المنتجات
+            Expanded(child: _buildStoresList()),
           ],
         ),
       ),
     );
   }
 
-  // الهيدر: رجوع + عنوان + أيقونة بروفايل تفتح الإعدادات
+  // (باقي الدوال _buildHeader و _buildSearch و _buildCategories كما هي)
+
   Widget _buildHeader(BuildContext context) {
+    // ... الكود كما هو
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
       child: Row(
@@ -112,7 +214,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // 💡 صندوق البحث (ربط بالـ Controller وتحديث _searchQuery)
   Widget _buildSearch() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -121,7 +222,8 @@ class _HomePageState extends State<HomePage> {
         child: TextField(
           controller: _searchController, // ربط المتحكم
           decoration: InputDecoration(
-            hintText: 'Search any Product or Store..',
+            // 💡 التعديل: تغيير نص التلميح (Hint Text) ليعكس البحث عن المتاجر فقط
+            hintText: 'Search any Store...',
             prefixIcon: const Icon(Icons.search_rounded, color: kHint),
             hintStyle: const TextStyle(color: kHint),
             filled: true,
@@ -147,7 +249,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // فلاتر الفئات — تُجلب من Firestore (categories) مع زر All
   Widget _buildCategories() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _catsCol.orderBy('name').snapshots(),
@@ -205,70 +306,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // 💡 التعديل 4: دالة جلب ودمج نتائج البحث (المتاجر والمنتجات)
-  Future<List<Map<String, dynamic>>> _fetchSearchResults() async {
-    // 1. جلب جميع المتاجر النشطة (للفلترة أو العرض الكامل)
-    final allShopsSnapshot = await _shopsCol.where('status', isEqualTo: 'active').get();
-
-    // 2. تطبيق فلترة البحث على المتاجر
-    final shopResults = allShopsSnapshot.docs.where((d) {
-      final data = d.data();
-      final name = (data['name'] ?? '').toString().toLowerCase();
-      final desc = (data['about'] ?? data['description'] ?? '').toString().toLowerCase();
-
-      // إذا كان البحث فارغاً، نعرض جميع المتاجر النشطة
-      if (_searchQuery.isEmpty) return true;
-
-      return name.contains(_searchQuery) || desc.contains(_searchQuery);
-    }).map((d) {
-      final data = d.data();
-      data['id'] = d.id;
-      data['type'] = 'shop'; // تحديد نوع النتيجة
-      return data;
-    }).toList();
-
-    // 3. فلترة المتاجر حسب التصنيف (تطبق على المتاجر فقط)
-    List<Map<String, dynamic>> shopsByCat;
-    if (_searchQuery.isEmpty && _selectedCat != 0) {
-      final selectedName = _selectedCategoryNameFromStream();
-      shopsByCat = shopResults.where((item) {
-        final shopCat = (item['category'] ?? '').toString();
-        return shopCat.toLowerCase() == selectedName.toLowerCase();
-      }).toList();
-    } else {
-      shopsByCat = shopResults;
-    }
-
-
-    // 4. جلب المنتجات وتطبيق فلترة البحث (تطبق فقط إذا كان هناك نص بحث)
-    final productResults = <Map<String, dynamic>>[];
-    if (_searchQuery.isNotEmpty) {
-      // 💡 جلب 200 منتج كحد أقصى للفلترة المحلية (غير فعال للبيانات الضخمة)
-      final allProductsSnapshot = await _productsCol.limit(200).get();
-
-      productResults.addAll(allProductsSnapshot.docs.where((d) {
-        final data = d.data();
-        final name = (data['title'] ?? data['name'] ?? '').toString().toLowerCase();
-        final desc = (data['description'] ?? data['desc'] ?? '').toString().toLowerCase();
-
-        return name.contains(_searchQuery) || desc.contains(_searchQuery);
-      }).map((d) {
-        final data = d.data();
-        data['id'] = d.id;
-        data['type'] = 'product'; // تحديد نوع النتيجة
-        return data;
-      }).toList());
-    }
-
-    // 5. دمج النتائج (المتاجر أولاً ثم المنتجات)
-    final combinedResults = <Map<String, dynamic>>[];
-    combinedResults.addAll(shopsByCat);
-    combinedResults.addAll(productResults);
-
-    return combinedResults;
-  }
-
-
   // 💡 التعديل 5: استخدام FutureBuilder بدلاً من StreamBuilder لعرض النتائج
   Widget _buildStoresList() {
     // 🛑 يتم إعادة تشغيل FutureBuilder في كل مرة تتغير فيها _searchQuery أو _selectedCat
@@ -307,72 +344,51 @@ class _HomePageState extends State<HomePage> {
           separatorBuilder: (_, __) => const Divider(height: 1),
           itemBuilder: (context, index) {
             final item = finalFilteredList[index];
-            final type = item['type'] ?? 'shop';
 
-            if (type == 'shop') {
-              // منطق عرض المتجر
-              final name   = (item['name'] ?? 'Shop').toString();
-              final desc   = (item['about'] ?? item['description'] ?? '').toString();
-              final logoUrl= (item['logoUrl'] ?? '').toString();
-              // final rating = (item['rating'] ?? 4.6).toString(); // (لا تستخدم rating للمتاجر حالياً)
+            // منطق عرض المتجر
+            final name   = (item['name'] ?? 'Shop').toString();
+            final desc   = (item['about'] ?? item['description'] ?? '').toString();
+            final logoUrl= (item['logoUrl'] ?? '').toString();
 
-              return ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                leading: _ShopAvatar(logoUrl: logoUrl),
-                title: Text(name, style: const TextStyle(fontWeight: FontWeight.w700, color: kTextDark)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 2),
-                    Text(desc, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54, height: 1.2)),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const SizedBox(width: 10),
-                        const Text('• Open', style: TextStyle(color: kPrimary, fontWeight: FontWeight.w600)),
-                      ],
-                    ),
-                  ],
-                ),
-                trailing: const Icon(Icons.chevron_right_rounded, color: Colors.black45),
-                onTap: () {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => StorePage(
-                    storeId: item['id'],
-                    storeName: name,
-                    storeLogo: logoUrl,
-                  )));
-                },
-              );
-            } else {
-              // منطق عرض المنتج
-              final name = (item['title'] ?? item['name'] ?? 'Product').toString();
-              final price = (item['price'] as num? ?? 0.0).toDouble().toStringAsFixed(2);
-              final imageUrl = (item['imageUrl'] ?? item['image'] ?? '').toString();
+            // 🛑 جلب وحساب حالة المتجر
+            final workingHours = item['workingHours'] as Map<String, dynamic>?;
+            final statusText = _getStoreStatus(workingHours);
 
-              // 💡 نحتاج إلى كائن Product للانتقال لصفحة التفاصيل
-              // (سأفترض أنكِ ستضيفين كلاس Product لتجنب التعقيد الآن، أو يمكن الانتقال للمتجر)
-              final isProductAvailable = item.containsKey('storeId'); // تحقق بسيط
+            // تحديد اللون بناءً على حالة الفتح (مقارنة بالكلمة الأولى في النص)
+            final bool isOpen = statusText.startsWith('Open');
+            final Color statusColor = isOpen ? kPrimary : Colors.red.shade400;
 
-              return ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                leading: _ProductSearchAvatar(imageUrl: imageUrl),
-                title: Text(
-                  '$name (Product)',
-                  style: const TextStyle(fontWeight: FontWeight.w700, color: kPrimary),
-                ),
-                subtitle: Text(
-                  'Price: $price JD',
-                  style: const TextStyle(color: Colors.black54, height: 1.2),
-                ),
-                trailing: const Icon(Icons.chevron_right_rounded, color: Colors.black45),
-                onTap: () {
-                  // هنا يمكنك الانتقال لصفحة تفاصيل المنتج إذا كان لديك الـ Model جاهز
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Viewing product: $name')),
-                  );
-                },
-              );
-            }
+            return ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              leading: _ShopAvatar(logoUrl: logoUrl),
+              title: Text(name, style: const TextStyle(fontWeight: FontWeight.w700, color: kTextDark)),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 2),
+                  Text(desc, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54, height: 1.2)),
+                  const SizedBox(height: 6),
+                  // 🛑 عرض حالة المتجر الديناميكية
+                  Row(
+                    children: [
+                      const SizedBox(width: 10),
+                      Text(
+                          '• $statusText',
+                          style: TextStyle(color: statusColor, fontWeight: FontWeight.w600)
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded, color: Colors.black45),
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => StorePage(
+                  storeId: item['id'],
+                  storeName: name,
+                  storeLogo: logoUrl,
+                )));
+              },
+            );
           },
         );
       },
@@ -395,7 +411,7 @@ class _HomePageState extends State<HomePage> {
     _lastCats = cats.isEmpty ? const ['All'] : List<String>.from(cats);
   }
 
-  // Bottom nav bar — زر Cart دائري بالوسط وبخلفية خضراء فاتحة مثل التصميم
+  // (باقي الدوال _buildBottomNav و _BarItem و _ShopAvatar و _ProductSearchAvatar كما هي)
   Widget _buildBottomNav(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
@@ -558,7 +574,7 @@ class _ShopAvatar extends StatelessWidget {
   );
 }
 
-// 💡 التعديل 6: صورة المنتج (شبكة أو رمز افتراضي)
+// 💡 التعديل 6: تم إبقاء هذا الكلاس ولكنه لن يُستخدم في دالة _buildStoresList
 class _ProductSearchAvatar extends StatelessWidget {
   const _ProductSearchAvatar({required this.imageUrl});
   final String imageUrl;

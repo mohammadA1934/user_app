@@ -11,13 +11,44 @@ import 'profile_settings_page.dart';
 // ✅ لإضافة المنتج إلى السلة عند الضغط على أيقونة العربة
 import '../data/cart_repo.dart';
 import 'rating_display.dart'; // ✅ تأكد من وجود هذا الاستيراد
-class WishlistPage extends StatelessWidget {
+
+// 🛑 تحويل الكلاس إلى StatefulWidget
+class WishlistPage extends StatefulWidget {
   const WishlistPage({super.key});
 
   static const kPrimary = Color(0xFF34D399);
   static const kTextDark = Color(0xFF222222);
   static const kHint = Color(0xFF9AA0A6);
   static const kBorder = Color(0xFFE5E7EB);
+
+  @override
+  State<WishlistPage> createState() => _WishlistPageState();
+}
+
+class _WishlistPageState extends State<WishlistPage> {
+  // 🛑 متغيرات للبحث
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // 🛑 دالة يتم استدعاؤها عند تغيير نص البحث
+  void _onSearchChanged() {
+    setState(() {
+      _searchQuery = _searchController.text.toLowerCase();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,9 +59,10 @@ class WishlistPage extends StatelessWidget {
         child: Column(
           children: [
             _header(context),
+            // 🛑 تمرير الـ Controller وتفعيل الـ onChanged
             _searchBox(),
             const SizedBox(height: 8),
-            // ✅ العنوان يعرض العدد الحقيقي
+            // ✅ العنوان يعرض العدد الحقيقي (العدد قبل الفلترة)
             AnimatedBuilder(
               animation: FavoritesRepo.instance,
               builder: (_, __) {
@@ -43,27 +75,35 @@ class WishlistPage extends StatelessWidget {
               child: AnimatedBuilder(
                 animation: FavoritesRepo.instance,
                 builder: (_, __) {
-                  final items = FavoritesRepo.instance.items; // List<Product>
-                  if (items.isEmpty) {
-                    return const Center(
+                  final allItems = FavoritesRepo.instance.items; // List<Product>
+
+                  // 🛑 تطبيق فلترة البحث
+                  final filteredItems = allItems.where((product) {
+                    final title = product.title.toLowerCase();
+                    return title.contains(_searchQuery);
+                  }).toList();
+
+                  if (filteredItems.isEmpty) {
+                    return Center(
                       child: Text(
-                        'No items in wishlist yet',
-                        style: TextStyle(color: kHint),
+                        _searchQuery.isEmpty
+                            ? 'No items in wishlist yet'
+                            : 'No results found for "$_searchQuery"',
+                        style: const TextStyle(color: WishlistPage.kHint),
                       ),
                     );
                   }
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: GridView.builder(
-                      itemCount: items.length,
+                      itemCount: filteredItems.length,
                       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 2,
                         mainAxisSpacing: 12,
                         crossAxisSpacing: 12,
-                        // تم رفع الـ childAspectRatio ليتسع للتقييم الجديد
                         childAspectRatio: .70,
                       ),
-                      itemBuilder: (_, i) => _ProductCard(item: items[i]),
+                      itemBuilder: (_, i) => _ProductCard(item: filteredItems[i]),
                     ),
                   );
                 },
@@ -90,7 +130,7 @@ class WishlistPage extends StatelessWidget {
           const Text(
             'Shoppinest',
             style: TextStyle(
-              color: kPrimary,
+              color: WishlistPage.kPrimary,
               fontWeight: FontWeight.w700,
               fontSize: 18,
             ),
@@ -106,8 +146,8 @@ class WishlistPage extends StatelessWidget {
             },
             child: CircleAvatar(
               radius: 18,
-              backgroundColor: kPrimary.withOpacity(0.15),
-              child: const Icon(Icons.person, color: kPrimary),
+              backgroundColor: WishlistPage.kPrimary.withOpacity(0.15),
+              child: const Icon(Icons.person, color: WishlistPage.kPrimary),
             ),
           ),
         ],
@@ -115,35 +155,38 @@ class WishlistPage extends StatelessWidget {
     );
   }
 
+  // 🛑 استخدام الـ Controller المُضاف
   Widget _searchBox() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SizedBox(
         height: 44,
         child: TextField(
+          controller: _searchController,
           decoration: InputDecoration(
             hintText: 'Search any Product..',
-            prefixIcon: const Icon(Icons.search_rounded, color: kHint),
-            hintStyle: const TextStyle(color: kHint),
+            prefixIcon: const Icon(Icons.search_rounded, color: WishlistPage.kHint),
+            hintStyle: const TextStyle(color: WishlistPage.kHint),
             filled: true,
             fillColor: Colors.white,
             contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: kBorder),
+              borderSide: const BorderSide(color: WishlistPage.kBorder),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: kPrimary, width: 1.4),
+              borderSide: const BorderSide(color: WishlistPage.kPrimary, width: 1.4),
             ),
           ),
+          // تم تفعيل الـ listener في initState، فلا نحتاج لـ onChanged هنا.
         ),
       ),
     );
   }
 
-  // ✅ يستقبل العدد الحقيقي ويعرضه بدل "10+ Items"
+  // ✅ تم حذف الـ _FilterChip
   Widget _titleRow(int count) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -152,37 +195,23 @@ class WishlistPage extends StatelessWidget {
           Text(
             '$count Items',
             style: const TextStyle(
-              color: kTextDark,
+              color: WishlistPage.kTextDark,
               fontWeight: FontWeight.w700,
               fontSize: 16,
             ),
           ),
           const Spacer(),
-          const _FilterChip(),
+          // 🛑 تم حذف الـ _FilterChip هنا
         ],
       ),
     );
   }
 }
 
-class _FilterChip extends StatelessWidget {
-  const _FilterChip();
 
-  @override
-  Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: () {},
-      icon: const Icon(Icons.filter_list_rounded, size: 18),
-      label: const Text('Filter'),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.black87,
-        side: const BorderSide(color: WishlistPage.kBorder),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
-  }
-}
+// 🛑 تم حذف الكلاس _FilterChip بالكامل
+
+
 
 class _ProductCard extends StatelessWidget {
   const _ProductCard({required this.item});
