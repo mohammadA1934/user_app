@@ -48,7 +48,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   // -----------------------------------------------------------
-  // 🛑 دالة منطق حساب حالة المتجر (جديدة)
+  // 🛑 دالة منطق حساب حالة المتجر (مُصححة لتطابق تنسيق DB)
   // -----------------------------------------------------------
   String _getStoreStatus(Map<String, dynamic>? workingHours) {
     if (workingHours == null || workingHours.isEmpty) {
@@ -57,9 +57,9 @@ class _HomePageState extends State<HomePage> {
 
     final now = DateTime.now();
     // الحصول على اليوم الحالي كنص (Mon, Tue, Wed, Thu, Fri, Sat, Sun)
-    final dayKeys = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    // now.weekday يعطي 1 للإثنين و 7 للأحد، لذا نضبط الفهرس
-    final currentDayKey = dayKeys[(now.weekday - 1) % 7];
+    // now.weekday يعطي 1 للإثنين و 7 للأحد
+    final dayKeys = ['Mon', 'Tue', 'Wen', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final currentDayKey = dayKeys[now.weekday - 1]; // تم تصحيح هذا المنطق
 
     final todayHours = workingHours[currentDayKey] as Map<String, dynamic>?;
 
@@ -168,10 +168,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // (باقي الدوال _buildHeader و _buildSearch و _buildCategories كما هي)
-
   Widget _buildHeader(BuildContext context) {
-    // ... الكود كما هو
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
       child: Row(
@@ -411,7 +408,6 @@ class _HomePageState extends State<HomePage> {
     _lastCats = cats.isEmpty ? const ['All'] : List<String>.from(cats);
   }
 
-  // (باقي الدوال _buildBottomNav و _BarItem و _ShopAvatar و _ProductSearchAvatar كما هي)
   Widget _buildBottomNav(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(

@@ -62,7 +62,7 @@ class _StorePageState extends State<StorePage> {
     super.dispose();
   }
 
-  // 🛑 دالة منطق حساب حالة المتجر (مأخوذة من HomePage)
+  // 🛑 دالة منطق حساب حالة المتجر (مصححة لتطابق تسلسل Mon, Tue, Wen...)
   StoreStatusResult _getStoreStatus(Map<String, dynamic>? workingHours) {
     if (workingHours == null || workingHours.isEmpty) {
       // إذا لم يتم تحديد الأوقات، نعتبره مفتوحاً مؤقتاً لتجنب إغلاق المتاجر غير المهيئة
@@ -70,9 +70,11 @@ class _StorePageState extends State<StorePage> {
     }
 
     final now = DateTime.now();
-    final dayKeys = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    // now.weekday يعطي 1 للإثنين و 7 للأحد، لذا نضبط الفهرس
-    final currentDayKey = dayKeys[(now.weekday - 1) % 7];
+
+    // 💡 التصحيح: يجب أن يبدأ التسلسل بـ 'Mon' (حيث now.weekday=1)
+    final dayKeys = ['Mon', 'Tue', 'Wen', 'Thu', 'Fri', 'Sat', 'Sun'];
+    // now.weekday يعطي 1 للإثنين و 7 للأحد
+    final currentDayKey = dayKeys[now.weekday - 1];
 
     final todayHours = workingHours[currentDayKey] as Map<String, dynamic>?;
 
