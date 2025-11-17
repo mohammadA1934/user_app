@@ -2,12 +2,13 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+// ✅ 1. حل تعارض User: استخدام البادئة sb لـ Supabase
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
-import 'change_password_page.dart'; // تأكد من وجود هذا الملف
+import 'change_password_page.dart';
 
 // ------------------------------------------------------------------
 // Formatter لتنسيق تاريخ الانتهاء تلقائيًا (MM/YY)
@@ -310,7 +311,7 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
   bool _loading = true;
   bool _saving = false;
   String? _photoUrl;
-  User? _user;
+  User? _user; // 👈 هنا يتم استخدام User من Firebase Auth
 
   // قائمة البطاقات المحفوظة
   List<Map<String, dynamic>> _cards = [];
@@ -476,6 +477,7 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
     }
   }
 
+  // ✅ 2. دالة رفع الصورة باستخدام Supabase Storage وفتح المعرض
   Future<void> _pickAndUploadImage() async {
     if (_user == null) {
       _snack('سجّل الدخول أولاً.');
@@ -484,32 +486,43 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
     try {
       final picker = ImagePicker();
       final x = await picker.pickImage(
-        source: ImageSource.gallery,
+        source: ImageSource.gallery, // 👈 هنا يفتح المعرض
         imageQuality: 85,
       );
       if (x == null) return;
 
       _snack('جاري رفع الصورة...');
-      final file = File(x.path);
-      final ref =
-      FirebaseStorage.instance.ref('users/${_user!.uid}/avatar.jpg');
-      await ref.putFile(file);
-      final url = await ref.getDownloadURL();
 
+      final file = File(x.path);
+      // استخدام Supabase client
+      final supabase = sb.Supabase.instance.client; // 👈 استخدام sb.Supabase
+      final filePath = 'users/${_user!.uid}/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      // رفع الملف إلى باكت "shop-logos"
+      await supabase.storage
+          .from('shop-logos')
+          .upload(filePath, file, fileOptions: const sb.FileOptions(upsert: true)); // 👈 استخدام sb.FileOptions
+
+      // الحصول على رابط الملف العام
+      final publicUrl = supabase.storage.from('shop-logos').getPublicUrl(filePath);
+
+      // حفظ الرابط في Firestore
       await FirebaseFirestore.instance
           .collection('users')
           .doc(_user!.uid)
-          .set({'photoUrl': url, 'updatedAt': FieldValue.serverTimestamp()},
+          .set({'photoUrl': publicUrl, 'updatedAt': FieldValue.serverTimestamp()},
           SetOptions(merge: true));
 
+      // تحديث واجهة المستخدم بالرابط الجديد
       if (mounted) {
-        setState(() => _photoUrl = url);
+        setState(() => _photoUrl = publicUrl);
       }
       _snack('تم تحديث الصورة.');
     } catch (e) {
       _snack('تعذر رفع الصورة: $e');
     }
   }
+  // ----------------------------------------------------------------
 
   Future<void> _onSave() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;

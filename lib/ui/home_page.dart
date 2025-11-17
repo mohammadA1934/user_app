@@ -1,7 +1,10 @@
+import 'dart:io'; // تم الاحتفاظ بها تحسباً لوجودها في الأصل
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'login_page.dart';
 import 'store_page.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // ✅ إضافة استيراد Firebase Auth
 
 // الصفحات المطلوبة للتنقل من الـ Bottom Bar
 import 'wishlist_page.dart';
@@ -31,21 +34,61 @@ class _HomePageState extends State<HomePage> {
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
 
+  // ✅ متغيرات جلب بيانات المستخدم والصورة
+  User? _user;
+  String? _userPhotoUrl;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   // 🔗 مراجع Firestore
   CollectionReference<Map<String, dynamic>> get _catsCol =>
       FirebaseFirestore.instance.collection('categories');
   CollectionReference<Map<String, dynamic>> get _shopsCol =>
       FirebaseFirestore.instance.collection('shops');
-  // 💡 التعديل 1: مرجع المنتجات (سيتم إبقاؤه لكنه لن يستخدم في البحث)
   CollectionReference<Map<String, dynamic>> get _productsCol =>
       FirebaseFirestore.instance.collection('products');
 
-  // 💡 التعديل 2: التخلص من المتحكم عند إغلاق الصفحة
+  // -----------------------------------------------------------
+  // ✅ دالة تحميل بيانات المستخدم وصورته
+  // -----------------------------------------------------------
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    _user = _auth.currentUser;
+    if (_user != null) {
+      try {
+        // جلب الصورة من Firestore
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_user!.uid)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          if (mounted) {
+            setState(() {
+              _userPhotoUrl = data?['photoUrl'] as String?;
+            });
+          }
+        }
+      } catch (e) {
+        // يمكن إضافة معالجة للأخطاء هنا
+        debugPrint('Error loading user profile: $e');
+      }
+      if (mounted) setState(() {});
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
+  // -----------------------------------------------------------
+
 
   // -----------------------------------------------------------
   // 🛑 دالة منطق حساب حالة المتجر (مُصححة لتطابق تنسيق DB)
@@ -56,10 +99,12 @@ class _HomePageState extends State<HomePage> {
     }
 
     final now = DateTime.now();
-    // الحصول على اليوم الحالي كنص (Mon, Tue, Wed, Thu, Fri, Sat, Sun)
+    // الحصول على اليوم الحالي كنص (Mon, Tue, Wen, Thu, Fri, Sat, Sun)
     // now.weekday يعطي 1 للإثنين و 7 للأحد
     final dayKeys = ['Mon', 'Tue', 'Wen', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final currentDayKey = dayKeys[now.weekday - 1]; // تم تصحيح هذا المنطق
+    // التحقق من أن القائمة ليست فارغة لتجنب RangeError إذا كان now.weekday خارج النطاق
+    if (now.weekday < 1 || now.weekday > 7) return 'Time error';
+    final currentDayKey = dayKeys[now.weekday - 1];
 
     final todayHours = workingHours[currentDayKey] as Map<String, dynamic>?;
 
@@ -100,7 +145,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   // -----------------------------------------------------------
-  // 💡 التعديل 4: دالة جلب نتائج البحث (المتاجر فقط)
+  // 💡 دالة جلب نتائج البحث (المتاجر فقط)
   // -----------------------------------------------------------
   Future<List<Map<String, dynamic>>> _fetchSearchResults() async {
     // 1. جلب جميع المتاجر النشطة (مع أوقات العمل)
@@ -198,12 +243,21 @@ class _HomePageState extends State<HomePage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
-              );
+              ).then((_) {
+                // ✅ إعادة تحميل الصورة عند العودة من صفحة الإعدادات
+                _loadUserProfile();
+              });
             },
             child: CircleAvatar(
               radius: 18,
               backgroundColor: kPrimary.withOpacity(.15),
-              child: const Icon(Icons.person, color: kPrimary),
+              // ✅ استخدام صورة المستخدم
+              backgroundImage: (_userPhotoUrl != null && _userPhotoUrl!.isNotEmpty)
+                  ? NetworkImage(_userPhotoUrl!) as ImageProvider<Object>
+                  : null,
+              child: (_userPhotoUrl == null || _userPhotoUrl!.isEmpty)
+                  ? const Icon(Icons.person, color: kPrimary)
+                  : null,
             ),
           ),
         ],

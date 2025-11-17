@@ -4,6 +4,10 @@ import '../models/product.dart';
 import '../data/favorites_repo.dart';
 import '../data/cart_repo.dart';
 
+// ✅ إضافة الاستيرادات الجديدة
+import 'package:firebase_auth/firebase_auth.dart';
+
+
 import 'home_page.dart';
 import 'wishlist_page.dart';
 import 'cart_page.dart';
@@ -24,6 +28,44 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
   static const Color kText = Color(0xFF222222);
   static const Color kHint = Color(0xFF9AA0A6);
   static const Color kBorder = Color(0xFFE5E7EB);
+
+  // ✅ متغيرات جديدة لبيانات المستخدم
+  User? _user;
+  String? _userPhotoUrl;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile(); // ✅ تحميل بيانات المستخدم عند البداية
+  }
+
+  // ✅ دالة جلب بيانات المستخدم والصورة
+  Future<void> _loadUserProfile() async {
+    _user = _auth.currentUser;
+    if (_user != null) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_user!.uid)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          if (mounted) {
+            setState(() {
+              _userPhotoUrl = data?['photoUrl'] as String?;
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('Error loading user profile: $e');
+      }
+      if (mounted) setState(() {});
+    }
+  }
+
 
   bool _isValidHttpUrl(String? s) {
     if (s == null || s.isEmpty) return false;
@@ -82,14 +124,23 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
-              );
+              ).then((_) {
+                // ✅ إعادة تحميل الصورة عند العودة من صفحة الإعدادات
+                _loadUserProfile();
+              });
             },
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8.0),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
               child: CircleAvatar(
                 radius: 16,
                 backgroundColor: kBorder,
-                child: Icon(Icons.person, size: 18, color: kText),
+                // ✅ استخدام صورة المستخدم
+                backgroundImage: (_userPhotoUrl != null && _userPhotoUrl!.isNotEmpty)
+                    ? NetworkImage(_userPhotoUrl!) as ImageProvider<Object>
+                    : null,
+                child: (_userPhotoUrl == null || _userPhotoUrl!.isEmpty)
+                    ? const Icon(Icons.person, size: 18, color: kText)
+                    : null,
               ),
             ),
           ),

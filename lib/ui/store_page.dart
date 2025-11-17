@@ -55,7 +55,43 @@ class _StorePageState extends State<StorePage> {
   // 🛑 متغير لتخزين حالة المتجر الديناميكية
   StoreStatusResult _storeStatus = StoreStatusResult(true, 'Loading...');
 
+  // ✅ متغيرات جديدة لبيانات المستخدم
+  User? _user;
+  String? _userPhotoUrl;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   // 💡 التعديل 3: التخلص من المتحكم
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile(); // ✅ تحميل بيانات المستخدم عند البداية
+  }
+
+  // ✅ دالة جلب بيانات المستخدم والصورة
+  Future<void> _loadUserProfile() async {
+    _user = _auth.currentUser;
+    if (_user != null) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_user!.uid)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          if (mounted) {
+            setState(() {
+              _userPhotoUrl = data?['photoUrl'] as String?;
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('Error loading user profile: $e');
+      }
+      if (mounted) setState(() {});
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -110,7 +146,7 @@ class _StorePageState extends State<StorePage> {
   }
 
 
-  // 💡 التعديل 4: شريط البحث المُحسَّن
+  // 💡 التعديل 4: شريط البحث المُحسَّن
   Widget _buildSearch() {
     return Container(
       height: 44,
@@ -189,12 +225,21 @@ class _StorePageState extends State<StorePage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
-              );
+              ).then((_) {
+                // ✅ إعادة تحميل الصورة عند العودة من صفحة الإعدادات
+                _loadUserProfile();
+              });
             },
             child: CircleAvatar(
               radius: 16,
               backgroundColor: border,
-              child: const Icon(Icons.person, color: textDark, size: 18),
+              // ✅ استخدام صورة المستخدم
+              backgroundImage: (_userPhotoUrl != null && _userPhotoUrl!.isNotEmpty)
+                  ? NetworkImage(_userPhotoUrl!) as ImageProvider<Object>
+                  : null,
+              child: (_userPhotoUrl == null || _userPhotoUrl!.isEmpty)
+                  ? const Icon(Icons.person, color: textDark, size: 18)
+                  : null,
             ),
           ),
           const SizedBox(width: 12),

@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+// ✅ إضافة الاستيرادات الجديدة
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../data/favorites_repo.dart';
 import '../models/product.dart';
 
@@ -30,10 +34,41 @@ class _WishlistPageState extends State<WishlistPage> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
+  // ✅ متغيرات جديدة لبيانات المستخدم
+  User? _user;
+  String? _userPhotoUrl;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   @override
   void initState() {
     super.initState();
+    _loadUserProfile(); // ✅ تحميل بيانات المستخدم عند البداية
     _searchController.addListener(_onSearchChanged);
+  }
+
+  // ✅ دالة جلب بيانات المستخدم والصورة
+  Future<void> _loadUserProfile() async {
+    _user = _auth.currentUser;
+    if (_user != null) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(_user!.uid)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+          if (mounted) {
+            setState(() {
+              _userPhotoUrl = data?['photoUrl'] as String?;
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('Error loading user profile: $e');
+      }
+      if (mounted) setState(() {});
+    }
   }
 
   @override
@@ -142,12 +177,21 @@ class _WishlistPageState extends State<WishlistPage> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
-              );
+              ).then((_) {
+                // ✅ إعادة تحميل الصورة عند العودة من صفحة الإعدادات
+                _loadUserProfile();
+              });
             },
             child: CircleAvatar(
               radius: 18,
               backgroundColor: WishlistPage.kPrimary.withOpacity(0.15),
-              child: const Icon(Icons.person, color: WishlistPage.kPrimary),
+              // ✅ استخدام صورة المستخدم
+              backgroundImage: (_userPhotoUrl != null && _userPhotoUrl!.isNotEmpty)
+                  ? NetworkImage(_userPhotoUrl!) as ImageProvider<Object>
+                  : null,
+              child: (_userPhotoUrl == null || _userPhotoUrl!.isEmpty)
+                  ? const Icon(Icons.person, color: WishlistPage.kPrimary)
+                  : null,
             ),
           ),
         ],
