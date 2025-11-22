@@ -1,17 +1,17 @@
-import 'dart:io'; // تم الاحتفاظ بها تحسباً لوجودها في الأصل
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'login_page.dart';
 import 'store_page.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // ✅ إضافة استيراد Firebase Auth
+import 'package:firebase_auth/firebase_auth.dart';
 
 // الصفحات المطلوبة للتنقل من الـ Bottom Bar
 import 'wishlist_page.dart';
 import 'cart_page.dart';
 import 'my_orders_page.dart';
 import 'profile_settings_page.dart';
-import 'product_detail_page.dart'; // قد تحتاج لهذا لاحقًا للانتقال لصفحة المنتج
+import 'product_detail_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -89,20 +89,40 @@ class _HomePageState extends State<HomePage> {
   }
   // -----------------------------------------------------------
 
+  // -----------------------------------------------------------
+  // ✅ دالة مساعدة لتحويل تنسيق 24 ساعة (HH:mm) إلى تنسيق 12 ساعة (h:mm a)
+  // -----------------------------------------------------------
+  String _format24To12(String time24) {
+    try {
+      final parts = time24.split(':');
+      final hour = int.parse(parts[0]);
+      final minute = int.parse(parts[1]);
+
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return time24;
+
+      final period = hour >= 12 ? 'PM' : 'AM';
+      // 00:00 و 12:00 تصبح 12
+      final hour12 = hour % 12 == 0 ? 12 : hour % 12;
+
+      final minuteStr = minute.toString().padLeft(2, '0');
+
+      return '$hour12:$minuteStr $period';
+    } catch (e) {
+      return time24;
+    }
+  }
+
 
   // -----------------------------------------------------------
-  // 🛑 دالة منطق حساب حالة المتجر (مُصححة لتطابق تنسيق DB)
+  // 🛑 دالة منطق حساب حالة المتجر (مُحدّثة لدعم 24 ساعة)
   // -----------------------------------------------------------
   String _getStoreStatus(Map<String, dynamic>? workingHours) {
     if (workingHours == null || workingHours.isEmpty) {
-      return 'Status unknown'; // إذا لم يتم تحديد الأوقات
+      return 'Status unknown';
     }
 
     final now = DateTime.now();
-    // الحصول على اليوم الحالي كنص (Mon, Tue, Wen, Thu, Fri, Sat, Sun)
-    // now.weekday يعطي 1 للإثنين و 7 للأحد
     final dayKeys = ['Mon', 'Tue', 'Wen', 'Thu', 'Fri', 'Sat', 'Sun'];
-    // التحقق من أن القائمة ليست فارغة لتجنب RangeError إذا كان now.weekday خارج النطاق
     if (now.weekday < 1 || now.weekday > 7) return 'Time error';
     final currentDayKey = dayKeys[now.weekday - 1];
 
@@ -116,30 +136,44 @@ class _HomePageState extends State<HomePage> {
       final startTimeStr = todayHours['start'] as String; // e.g., "09:00"
       final endTimeStr = todayHours['end'] as String;     // e.g., "17:00"
 
-      // تحويل الوقت الحالي إلى دقائق من منتصف الليل
-      final nowTimeMinutes = now.hour * 60 + now.minute;
+      // ✅ الإضافة الجديدة: التحقق من حالة 24 ساعة (00:00 - 00:00)
+      if (startTimeStr == '00:00' && endTimeStr == '00:00') {
+        return 'Open 24 Hours';
+      }
 
-      // تحليل وقت البدء والانتهاء إلى دقائق
+      // 💡 يتم الحساب المنطقي باستخدام تنسيق 24 ساعة (دقيق)
+      final nowTimeMinutes = now.hour * 60 + now.minute;
       final startParts = startTimeStr.split(':').map(int.parse).toList();
       final startTimeMinutes = startParts[0] * 60 + startParts[1];
-
       final endParts = endTimeStr.split(':').map(int.parse).toList();
-      final endTimeMinutes = endParts[0] * 60 + endParts[1];
+
+      // 🛑 التعديل هنا: إذا كانت النهاية 00:00 (نهاية اليوم) وقيمة البداية أصغر، نجعل النهاية 24:00 (1440 دقيقة)
+      // هذا يسمح للحسابات بالعمل بشكل صحيح عند العمل حتى منتصف الليل
+      int endTimeMinutes = endParts[0] * 60 + endParts[1];
+      if (endTimeMinutes == 0 && startTimeMinutes != 0) {
+        endTimeMinutes = 24 * 60; // 1440 دقيقة
+      }
+
+      // 💡 يتم تحويل الأوقات للعرض باستخدام AM/PM
+      final startTime12 = _format24To12(startTimeStr);
+      // 🛑 إذا كانت النهاية 00:00، نُفضل عرض 12:00 AM (وهو ما تفعله _format24To12 بالفعل)
+      final endTime12 = _format24To12(endTimeStr);
+
 
       // 🛑 التحقق من الحالة
       if (nowTimeMinutes >= startTimeMinutes && nowTimeMinutes < endTimeMinutes) {
         // مفتوح حالياً
-        return 'Open now ($startTimeStr - $endTimeStr)';
+        return 'Open now ($startTime12 - $endTime12)';
       } else if (nowTimeMinutes < startTimeMinutes) {
         // مغلق حالياً، سيفتح لاحقاً اليوم
-        return 'Closed now. Opens at $startTimeStr';
+        return 'Closed now. Opens at $startTime12';
       } else {
         // مغلق حالياً، وقت العمل انتهى لهذا اليوم
+        // هذا الشرط لن يُنفذ إذا كانت النهاية 00:00 بسبب التعديل أعلاه (1440 دقيقة)
         return 'Closed. Reopens tomorrow';
       }
 
     } catch (e) {
-      // إذا كان هناك خطأ في تنسيق البيانات (مثلاً: "start" ليس String)
       return 'Hours data error';
     }
   }
@@ -654,5 +688,4 @@ class _ProductSearchAvatar extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
     ),
     child: const Icon(Icons.shopping_bag_outlined, color: _HomePageState.kHint),
-  );
-}
+  );}
