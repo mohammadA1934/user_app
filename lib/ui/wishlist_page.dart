@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-// ✅ إضافة الاستيرادات الجديدة
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -12,11 +11,13 @@ import 'cart_page.dart';
 import 'my_orders_page.dart';
 import 'profile_settings_page.dart';
 
-// ✅ لإضافة المنتج إلى السلة عند الضغط على أيقونة العربة
 import '../data/cart_repo.dart';
-import 'rating_display.dart'; // ✅ تأكد من وجود هذا الاستيراد
+import 'rating_display.dart';
 
-// 🛑 تحويل الكلاس إلى StatefulWidget
+// ==========================================================
+// 🛑 الكلاس الرئيسي: WishlistPage (Stateless -> StatefulWidget)
+// ==========================================================
+
 class WishlistPage extends StatefulWidget {
   const WishlistPage({super.key});
 
@@ -30,11 +31,9 @@ class WishlistPage extends StatefulWidget {
 }
 
 class _WishlistPageState extends State<WishlistPage> {
-  // 🛑 متغيرات للبحث
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
-  // ✅ متغيرات جديدة لبيانات المستخدم
   User? _user;
   String? _userPhotoUrl;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -42,11 +41,10 @@ class _WishlistPageState extends State<WishlistPage> {
   @override
   void initState() {
     super.initState();
-    _loadUserProfile(); // ✅ تحميل بيانات المستخدم عند البداية
+    _loadUserProfile();
     _searchController.addListener(_onSearchChanged);
   }
 
-  // ✅ دالة جلب بيانات المستخدم والصورة
   Future<void> _loadUserProfile() async {
     _user = _auth.currentUser;
     if (_user != null) {
@@ -78,7 +76,6 @@ class _WishlistPageState extends State<WishlistPage> {
     super.dispose();
   }
 
-  // 🛑 دالة يتم استدعاؤها عند تغيير نص البحث
   void _onSearchChanged() {
     setState(() {
       _searchQuery = _searchController.text.toLowerCase();
@@ -94,13 +91,12 @@ class _WishlistPageState extends State<WishlistPage> {
         child: Column(
           children: [
             _header(context),
-            // 🛑 تمرير الـ Controller وتفعيل الـ onChanged
             _searchBox(),
             const SizedBox(height: 8),
-            // ✅ العنوان يعرض العدد الحقيقي (العدد قبل الفلترة)
             AnimatedBuilder(
               animation: FavoritesRepo.instance,
               builder: (_, __) {
+                // عدد العناصر في القائمة الحقيقية (قبل الفلترة)
                 final count = FavoritesRepo.instance.items.length;
                 return _titleRow(count);
               },
@@ -110,9 +106,10 @@ class _WishlistPageState extends State<WishlistPage> {
               child: AnimatedBuilder(
                 animation: FavoritesRepo.instance,
                 builder: (_, __) {
+                  // هنا يتم جلب IDs المنتجات من قائمة الأمنيات
                   final allItems = FavoritesRepo.instance.items; // List<Product>
 
-                  // 🛑 تطبيق فلترة البحث
+                  // 🛑 تطبيق فلترة البحث على الـ Product Objects
                   final filteredItems = allItems.where((product) {
                     final title = product.title.toLowerCase();
                     return title.contains(_searchQuery);
@@ -128,17 +125,22 @@ class _WishlistPageState extends State<WishlistPage> {
                       ),
                     );
                   }
+
+                  // 💡 نقوم بتمرير IDs المنتجات فقط إلى _ProductCard
+                  final productIds = filteredItems.map((e) => e.id).toList();
+
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: GridView.builder(
-                      itemCount: filteredItems.length,
+                      itemCount: productIds.length,
                       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 2,
                         mainAxisSpacing: 12,
                         crossAxisSpacing: 12,
                         childAspectRatio: .70,
                       ),
-                      itemBuilder: (_, i) => _ProductCard(item: filteredItems[i]),
+                      // 🛑 التعديل الأهم: تمرير ID المنتج بدلاً من الكائن الكامل
+                      itemBuilder: (_, i) => _ProductCard(productId: productIds[i]),
                     ),
                   );
                 },
@@ -150,7 +152,6 @@ class _WishlistPageState extends State<WishlistPage> {
     );
   }
 
-  // هيدر: سهم رجوع + عنوان + أفاتار يفتح Profile Settings
   Widget _header(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 12, 6),
@@ -178,14 +179,12 @@ class _WishlistPageState extends State<WishlistPage> {
                 context,
                 MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
               ).then((_) {
-                // ✅ إعادة تحميل الصورة عند العودة من صفحة الإعدادات
                 _loadUserProfile();
               });
             },
             child: CircleAvatar(
               radius: 18,
               backgroundColor: WishlistPage.kPrimary.withOpacity(0.15),
-              // ✅ استخدام صورة المستخدم
               backgroundImage: (_userPhotoUrl != null && _userPhotoUrl!.isNotEmpty)
                   ? NetworkImage(_userPhotoUrl!) as ImageProvider<Object>
                   : null,
@@ -199,7 +198,6 @@ class _WishlistPageState extends State<WishlistPage> {
     );
   }
 
-  // 🛑 استخدام الـ Controller المُضاف
   Widget _searchBox() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -221,16 +219,15 @@ class _WishlistPageState extends State<WishlistPage> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: WishlistPage.kPrimary, width: 1.4),
+              borderSide:
+              const BorderSide(color: WishlistPage.kPrimary, width: 1.4),
             ),
           ),
-          // تم تفعيل الـ listener في initState، فلا نحتاج لـ onChanged هنا.
         ),
       ),
     );
   }
 
-  // ✅ تم حذف الـ _FilterChip
   Widget _titleRow(int count) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -245,115 +242,197 @@ class _WishlistPageState extends State<WishlistPage> {
             ),
           ),
           const Spacer(),
-          // 🛑 تم حذف الـ _FilterChip هنا
         ],
       ),
     );
   }
 }
 
-
-// 🛑 تم حذف الكلاس _FilterChip بالكامل
-
-
+// ==========================================================
+// 🛑 كلاس _ProductCard: يستخدم StreamBuilder للتحديث التلقائي
+// ==========================================================
 
 class _ProductCard extends StatelessWidget {
-  const _ProductCard({required this.item});
-  final Product item;
+  // 🛑 تم تغيير نوع المدخل من Product إلى String (ID)
+  const _ProductCard({required this.productId});
+  final String productId;
+
+  static const textDark = WishlistPage.kTextDark;
+  static const green = WishlistPage.kPrimary;
+  static const hint = WishlistPage.kHint;
+  static const border = WishlistPage.kBorder;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      elevation: .5,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => ProductDetailPage(product: item),
-            ),
-          );
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ✅ صورة مرِنة لمنع ظهور شريط overflow الأصفر
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(
-                    item.image,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) =>
-                        Container(color: Colors.grey.shade200),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                item.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: WishlistPage.kTextDark,
-                ),
-              ),
-              const SizedBox(height: 4),
+    // 💡 استخدام StreamBuilder للاستماع لتغييرات المنتج من Firestore
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('products')
+          .doc(productId) // الاستماع للمنتج المحدد بالـ ID
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _buildLoadingCard();
+        }
 
-              // 💡 إضافة عرض التقييم هنا
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        // التعامل مع حالة عدم وجود المنتج (ربما تم حذفه من قبل المتجر)
+        if (!snapshot.hasData || !snapshot.data!.exists) {
+          // يمكن هنا إزالة العنصر من القائمة مباشرة، أو تركه كرسالة خطأ مؤقتة
+          // بما أن FavoritesRepo يعتمد على الذاكرة، سنعتبره محذوفاً ونزيله
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            FavoritesRepo.instance.remove(productId);
+          });
+          return _buildDeletedCard();
+        }
+
+        final d = snapshot.data!.data()!;
+
+        // 💡 إنشاء كائن Product من البيانات الحية
+        final liveProduct = Product(
+          id: snapshot.data!.id,
+          title: (d['name'] ?? 'Product').toString(),
+          desc: (d['description'] ?? '').toString(),
+          price: (d['price'] is num)
+              ? (d['price'] as num).toDouble()
+              : double.tryParse('${d['price']}') ?? 0,
+          image: (d['imageUrl'] ?? d['image'] ?? '').toString(),
+          storeId: (d['storeId'] ?? '').toString(),
+          avgRating: (d['avgRating'] as num? ?? 0.0).toDouble(),
+          ratingsCount: (d['ratingsCount'] as num? ?? 0).toInt(),
+        );
+
+        // بناء البطاقة باستخدام البيانات الحية (liveProduct)
+        return Material(
+          color: Colors.white,
+          elevation: .5,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ProductDetailPage(product: liveProduct),
+                ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    '${item.price.toStringAsFixed(2)} JD',
-                    style: const TextStyle(
-                      color: Colors.black87,
-                      fontWeight: FontWeight.w700,
+                  // ✅ الصورة (تحديث حي)
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: (liveProduct.image.isNotEmpty)
+                          ? Image.network(
+                        liveProduct.image,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            Container(color: Colors.grey.shade200),
+                      )
+                          : Container(color: Colors.grey.shade200),
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  // ✅ العنوان (تحديث حي)
+                  Text(
+                    liveProduct.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: textDark,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
 
-                  // ✅ دمج الـ RatingDisplay هنا
-                  RatingDisplay(
-                    avgRating: item.avgRating,
-                    ratingsCount: item.ratingsCount,
-                    starSize: 14,
-                    textSize: 12.5,
+                  // 💡 السعر والتقييم (تحديث حي)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${liveProduct.price.toStringAsFixed(2)} JD',
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      RatingDisplay(
+                        avgRating: liveProduct.avgRating,
+                        ratingsCount: liveProduct.ratingsCount,
+                        starSize: 14,
+                        textSize: 12.5,
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 4),
+
+                  // سطر الأيقونات
+                  Row(
+                    children: [
+                      const Spacer(),
+                      // ✅ حذف من الـ Wishlist (يستخدم الـ ID الحي)
+                      IconButton(
+                        tooltip: 'Remove',
+                        icon: const Icon(Icons.delete_outline_rounded),
+                        // 💡 حذف المنتج من FavoritesRepo باستخدام الـ ID
+                        onPressed: () => FavoritesRepo.instance.remove(liveProduct.id),
+                      ),
+                      const SizedBox(width: 6),
+                      // ✅ نقل إلى السلة ثم فتح صفحة السلة
+                      IconButton(
+                        tooltip: 'Move to cart',
+                        icon: const Icon(Icons.shopping_cart_outlined),
+                        onPressed: () {
+                          CartRepo.instance.add(liveProduct);
+                          // 💡 من الأفضل إزالته من قائمة الأمنيات بعد نقله للسلة
+                          FavoritesRepo.instance.remove(liveProduct.id);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const CartPage()),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ],
               ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 
-              const SizedBox(height: 4),
+  Widget _buildLoadingCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: border.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Center(child: CircularProgressIndicator(strokeWidth: 2, color: green)),
+    );
+  }
 
-              // سطر الأيقونات
-              Row(
-                children: [
-                  const Spacer(),
-                  // ✅ حذف من الـ Wishlist
-                  IconButton(
-                    tooltip: 'Remove',
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    onPressed: () => FavoritesRepo.instance.remove(item.id),
-                  ),
-                  const SizedBox(width: 6),
-                  // ✅ نقل إلى السلة ثم فتح صفحة السلة
-                  IconButton(
-                    tooltip: 'Move to cart',
-                    icon: const Icon(Icons.shopping_cart_outlined),
-                    onPressed: () {
-                      CartRepo.instance.add(item);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CartPage()),
-                      );
-                    },
-                  ),
-                ],
-              ),
+  Widget _buildDeletedCard() {
+    return Container(
+      height: 250, // تقريبي لحجم البطاقة
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.sentiment_dissatisfied, color: hint),
+              const SizedBox(height: 8),
+              const Text('Product Not Found', style: TextStyle(color: textDark, fontWeight: FontWeight.bold)),
+              Text('Removed from wishlist.', style: TextStyle(color: hint, fontSize: 12)),
             ],
           ),
         ),
@@ -362,10 +441,13 @@ class _ProductCard extends StatelessWidget {
   }
 }
 
-/// Bottom Nav بشكل الصورة (زر Cart دائري بالوسط)
+// ==========================================================
+// كلاس _BottomNav (لم يتم تعديله)
+// ==========================================================
+
 class _BottomNav extends StatelessWidget {
   const _BottomNav({required this.currentIndex});
-  final int currentIndex; // 0=Home, 1=Wishlist, 2=Orders, 3=Settings
+  final int currentIndex;
 
   static const kPrimary = WishlistPage.kPrimary;
   static const kBorder = WishlistPage.kBorder;
@@ -407,7 +489,7 @@ class _BottomNav extends StatelessWidget {
                     // أنت بالفعل على wishlist — لا شيء
                   },
                 ),
-                const SizedBox(width: 56), // مكان الزر الدائري
+                const SizedBox(width: 56),
                 _item(
                   context,
                   icon: Icons.inventory_2_outlined,
@@ -436,8 +518,6 @@ class _BottomNav extends StatelessWidget {
               ],
             ),
           ),
-
-          // زر السلة الدائري بالمنتصف
           Positioned(
             bottom: 8,
             child: InkWell(
@@ -450,7 +530,7 @@ class _BottomNav extends StatelessWidget {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  color: kPrimary.withOpacity(0.12), // أخضر فاتح كما في الصورة
+                  color: kPrimary.withOpacity(0.12),
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
