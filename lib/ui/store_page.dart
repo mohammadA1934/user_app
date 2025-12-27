@@ -120,7 +120,7 @@ class _StorePageState extends State<StorePage> {
 
     try {
       final startTimeStr = todayHours['start'] as String; // e.g., "09:00"
-      final endTimeStr = todayHours['end'] as String;     // e.g., "17:00"
+      final endTimeStr = todayHours['end'] as String;      // e.g., "17:00"
 
       final nowTimeMinutes = now.hour * 60 + now.minute;
 
@@ -408,23 +408,53 @@ class _StoreProductsGrid extends StatelessWidget {
           ),
           itemBuilder: (context, index) {
             final d = filteredDocs[index].data();
-            // تحويل وثيقة Firestore -> Product موديل التطبيق
+
+            // 1️⃣ جلب القيم الأساسية من البيانات
+            double currentPrice = (d['price'] is num) ? (d['price'] as num).toDouble() : 0.0;
+            double? oldPriceData = (d['oldPrice'] is num) ? (d['oldPrice'] as num).toDouble() : null;
+            bool hasDiscount = d['hasDiscount'] ?? false;
+            Timestamp? expiry = d['discountExpiry'] as Timestamp?;
+
+            // 2️⃣ 🛑 منطق إرجاع السعر للأصل تلقائياً عند انتهاء الوقت
+            if (hasDiscount && expiry != null) {
+              if (DateTime.now().isAfter(expiry.toDate())) {
+                // إذا انتهى الوقت، السعر الحالي يصبح هو السعر القديم
+                if (oldPriceData != null) {
+                  currentPrice = oldPriceData;
+                }
+                hasDiscount = false;
+                oldPriceData = null; // نلغي السعر المشطوب في الواجهة
+
+                // تحديث قاعدة البيانات فوراً (Firestore) لإلغاء الخصم نهائياً
+                FirebaseFirestore.instance
+                    .collection('products')
+                    .doc(filteredDocs[index].id)
+                    .update({
+                  'price': currentPrice,
+                  'hasDiscount': false,
+                  'oldPrice': null,
+                  'discountExpiry': null,
+                }).catchError((e) => debugPrint("Auto-update failed: $e"));
+              }
+            }
+
+            // 3️⃣ تحويل وثيقة Firestore -> Product موديل التطبيق (بالسعر المصحح)
             final product = Product(
               id: filteredDocs[index].id,
               title: (d['name'] ?? 'Product').toString(),
               desc: (d['description'] ?? d['desc'] ?? '').toString(),
-              price: (d['price'] is num)
-                  ? (d['price'] as num).toDouble()
-                  : double.tryParse('${d['price']}') ?? 0,
+              price: currentPrice, // ✅ هنا السعر المعدل
               image: (d['imageUrl'] ?? d['image'] ?? '').toString(),
               storeId: (d['storeId'] ?? '').toString(),
               avgRating: (d['avgRating'] as num? ?? 0.0).toDouble(),
               ratingsCount: (d['ratingsCount'] as num? ?? 0).toInt(),
             );
 
+            // 4️⃣ عرض البطاقة
             return _ProductCardUI(
               product: product,
-              isShopOpen: isShopOpen, // 🛑 تمرير حالة الفتح
+              oldPrice: oldPriceData, // سيكون null إذا انتهى الخصم
+              isShopOpen: isShopOpen,
               onOpenDetails: () {
                 Navigator.push(
                   context,
@@ -433,7 +463,6 @@ class _StoreProductsGrid extends StatelessWidget {
                   ),
                 );
               },
-              // 🛑 تعديل دالة onCart لإظهار تحذير في حال الإغلاق
               onCart: () {
                 if (!isShopOpen) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -610,6 +639,7 @@ class _BottomBar extends StatelessWidget {
 class _ProductCardUI extends StatelessWidget {
   const _ProductCardUI({
     required this.product,
+    this.oldPrice, // 👈 استقبال السعر القديم
     required this.onOpenDetails,
     required this.onCart,
     required this.onWishlist,
@@ -617,6 +647,7 @@ class _ProductCardUI extends StatelessWidget {
   });
 
   final Product product;
+  final double? oldPrice; // 👈 إضافة المتغير هنا
   final VoidCallback onOpenDetails;
   final VoidCallback onCart;
   final VoidCallback onWishlist;
@@ -693,13 +724,46 @@ class _ProductCardUI extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  Text(
-                    '${product.price.toStringAsFixed(2)} JD',
-                    style: const TextStyle(
-                      color: textDark,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                    ),
+
+                  // 👈 تعديل: عرض السعر الجديد وبجانبه القديم مشطوباً
+
+
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      // السعر الجديد (الحالي)
+                      Text(
+                        '${product.price.toStringAsFixed(2)} JD',
+                        style: const TextStyle(
+                          color: textDark,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
+                        ),
+                      ),
+
+                      if (oldPrice != null && oldPrice! > product.price) ...[
+                        const SizedBox(width: 8),
+                        // ✨ السعر القديم مع JD وتنسيق الماركر الأصفر
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.yellow.withOpacity(0.35), // خلفية صفراء للفت الانتباه
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '${oldPrice!.toStringAsFixed(2)} JD', // 🟢 أضفنا JD هنا
+                            style: TextStyle(
+                              color: Colors.black.withOpacity(0.9),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900, // خط عريض جداً
+                              decoration: TextDecoration.lineThrough, // خط الشطب
+                              decorationColor: Colors.red.shade700,   // شطب أحمر غامق
+                              decorationThickness: 3.5,              // خط شطب سميك جداً
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 6),
 

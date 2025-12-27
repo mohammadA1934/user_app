@@ -275,10 +275,7 @@ class _ProductCard extends StatelessWidget {
           return _buildLoadingCard();
         }
 
-        // التعامل مع حالة عدم وجود المنتج (ربما تم حذفه من قبل المتجر)
         if (!snapshot.hasData || !snapshot.data!.exists) {
-          // يمكن هنا إزالة العنصر من القائمة مباشرة، أو تركه كرسالة خطأ مؤقتة
-          // بما أن FavoritesRepo يعتمد على الذاكرة، سنعتبره محذوفاً ونزيله
           WidgetsBinding.instance.addPostFrameCallback((_) {
             FavoritesRepo.instance.remove(productId);
           });
@@ -287,21 +284,30 @@ class _ProductCard extends StatelessWidget {
 
         final d = snapshot.data!.data()!;
 
-        // 💡 إنشاء كائن Product من البيانات الحية
+        // 1️⃣ جلب بيانات السعر والخصم والتاريخ
+        double currentPrice = (d['price'] is num) ? (d['price'] as num).toDouble() : 0.0;
+        double? oldPriceData = (d['oldPrice'] is num) ? (d['oldPrice'] as num).toDouble() : null;
+        bool hasDiscount = d['hasDiscount'] ?? false;
+        Timestamp? expiry = d['discountExpiry'] as Timestamp?;
+
+        // 2️⃣ منطق انتهاء الوقت التلقائي (لو انتهى التاريخ يرجع السعر للأصل)
+        if (hasDiscount && expiry != null && DateTime.now().isAfter(expiry.toDate())) {
+          if (oldPriceData != null) currentPrice = oldPriceData;
+          oldPriceData = null; // نلغيه عشان ما يظهر مشطوب
+        }
+
+        // 3️⃣ إنشاء كائن المنتج بالبيانات الحية
         final liveProduct = Product(
           id: snapshot.data!.id,
           title: (d['name'] ?? 'Product').toString(),
           desc: (d['description'] ?? '').toString(),
-          price: (d['price'] is num)
-              ? (d['price'] as num).toDouble()
-              : double.tryParse('${d['price']}') ?? 0,
+          price: currentPrice,
           image: (d['imageUrl'] ?? d['image'] ?? '').toString(),
           storeId: (d['storeId'] ?? '').toString(),
           avgRating: (d['avgRating'] as num? ?? 0.0).toDouble(),
           ratingsCount: (d['ratingsCount'] as num? ?? 0).toInt(),
         );
 
-        // بناء البطاقة باستخدام البيانات الحية (liveProduct)
         return Material(
           color: Colors.white,
           elevation: .5,
@@ -310,9 +316,7 @@ class _ProductCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             onTap: () {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ProductDetailPage(product: liveProduct),
-                ),
+                MaterialPageRoute(builder: (_) => ProductDetailPage(product: liveProduct)),
               );
             },
             child: Padding(
@@ -320,74 +324,83 @@ class _ProductCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ✅ الصورة (تحديث حي)
+                  // الصورة
                   Expanded(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: (liveProduct.image.isNotEmpty)
-                          ? Image.network(
-                        liveProduct.image,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            Container(color: Colors.grey.shade200),
-                      )
+                          ? Image.network(liveProduct.image, fit: BoxFit.cover)
                           : Container(color: Colors.grey.shade200),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  // ✅ العنوان (تحديث حي)
+                  // العنوان
                   Text(
                     liveProduct.title,
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: textDark,
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w700, color: textDark),
                   ),
                   const SizedBox(height: 4),
 
-                  // 💡 السعر والتقييم (تحديث حي)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  // 💰 عرض السعر الحالي والسعر القديم (المشطوب)
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
                         '${liveProduct.price.toStringAsFixed(2)} JD',
                         style: const TextStyle(
-                          color: Colors.black87,
-                          fontWeight: FontWeight.w700,
+                          color: textDark,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
                         ),
                       ),
-                      RatingDisplay(
-                        avgRating: liveProduct.avgRating,
-                        ratingsCount: liveProduct.ratingsCount,
-                        starSize: 14,
-                        textSize: 12.5,
-                      ),
+                      // يظهر فقط إذا كان هناك سعر قديم حقيقي وأكبر من الحالي
+                      if (oldPriceData != null && oldPriceData > liveProduct.price) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.yellow.withOpacity(0.35),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '${oldPriceData.toStringAsFixed(2)} JD',
+                            style: TextStyle(
+                              color: Colors.black.withOpacity(0.8),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              decoration: TextDecoration.lineThrough,
+                              decorationColor: Colors.red.shade700,
+                              decorationThickness: 2,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
-
                   const SizedBox(height: 4),
-
-                  // سطر الأيقونات
+                  RatingDisplay(
+                    avgRating: liveProduct.avgRating,
+                    ratingsCount: liveProduct.ratingsCount,
+                    starSize: 13,
+                    textSize: 11,
+                  ),
+                  const Spacer(),
+                  // سطر الأزرار
                   Row(
                     children: [
                       const Spacer(),
-                      // ✅ حذف من الـ Wishlist (يستخدم الـ ID الحي)
                       IconButton(
                         tooltip: 'Remove',
-                        icon: const Icon(Icons.delete_outline_rounded),
-                        // 💡 حذف المنتج من FavoritesRepo باستخدام الـ ID
+                        icon: const Icon(Icons.delete_outline_rounded, size: 20),
                         onPressed: () => FavoritesRepo.instance.remove(liveProduct.id),
                       ),
-                      const SizedBox(width: 6),
-                      // ✅ نقل إلى السلة ثم فتح صفحة السلة
                       IconButton(
                         tooltip: 'Move to cart',
-                        icon: const Icon(Icons.shopping_cart_outlined),
+                        icon: const Icon(Icons.shopping_cart_outlined, size: 20, color: green),
                         onPressed: () {
                           CartRepo.instance.add(liveProduct);
-                          // 💡 من الأفضل إزالته من قائمة الأمنيات بعد نقله للسلة
                           FavoritesRepo.instance.remove(liveProduct.id);
                           Navigator.push(
                             context,
