@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'signup_page.dart';
 import 'forgot_password_page.dart';
 import 'home_page.dart';
@@ -127,7 +127,26 @@ class _LoginPageState extends State<LoginPage> {
       }
 
       if (!mounted) return;
+// 🔹 فحص حالة الحساب من Firestore
+      final uid = cred.user!.uid;
 
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get();
+
+      final status =
+      (userDoc.data()?['status'] ?? 'active').toString().toLowerCase();
+
+// ⛔ الحساب Deactivated
+      if (status == 'deactive') {
+        await FirebaseAuth.instance.signOut();
+
+        _showSnack(
+          'Your account has been deactivated.',
+        );
+        return; // امنعي الدخول
+      }
       // نجاح → انتقل للصفحة الرئيسية
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomePage()),
