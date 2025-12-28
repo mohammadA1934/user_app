@@ -315,10 +315,7 @@ class _StorePageState extends State<StorePage> {
                     },
                     icon: const Icon(Icons.chat_bubble_outline, color: textDark),
                   ),
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.tune, color: textDark),
-                  ),
+
                 ],
               ),
               const SizedBox(height: 8),
